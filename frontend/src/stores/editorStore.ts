@@ -1,6 +1,6 @@
 import { produce } from 'immer';
 import { create } from 'zustand';
-import { cloneSchema, createComponentNode, findNodeById, normalizePageSchema, type CanvasPosition, type ComponentNode, type ComponentScripts, type ComponentType, type ComponentVariable, type PageSchema } from '../schema/pageSchema';
+import { cloneSchema, createComponentNode, findNodeById, normalizePageSchema, type CanvasPosition, type ComponentNode, type ComponentScripts, type ComponentType, type ComponentVariable, type PageSchema, type PageScripts } from '../schema/pageSchema';
 
 interface EditorState {
   schema: PageSchema | null;
@@ -27,6 +27,8 @@ interface EditorState {
   updateSelectedVariables: (variables: ComponentVariable[]) => void;
   updateNodeScripts: (nodeId: string, patch: Partial<ComponentScripts>) => void;
   updateSelectedScripts: (patch: Partial<ComponentScripts>) => void;
+  updatePageVariables: (variables: ComponentVariable[]) => void;
+  updatePageScripts: (patch: Partial<PageScripts>) => void;
   updatePageSettings: (patch: Record<string, unknown>) => void;
   bringSelectedToFront: (nodeId?: string) => void;
   sendSelectedToBack: (nodeId?: string) => void;
@@ -321,6 +323,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
 
     get().updateNodeScripts(selectedId, patch);
+  },
+  updatePageVariables: (variables) => {
+    const { schema } = get();
+    if (!schema) {
+      return;
+    }
+
+    const nextSchema = buildNextState(schema, (draft) => {
+      draft.variables = variables;
+    });
+
+    set((state) => ({
+      schema: nextSchema,
+      history: [...state.history, cloneSchema(schema)].slice(-MAX_HISTORY),
+      future: [],
+    }));
+  },
+  updatePageScripts: (patch) => {
+    const { schema } = get();
+    if (!schema) {
+      return;
+    }
+
+    const nextSchema = buildNextState(schema, (draft) => {
+      draft.scripts = {
+        ...draft.scripts,
+        ...patch,
+      };
+    });
+
+    set((state) => ({
+      schema: nextSchema,
+      history: [...state.history, cloneSchema(schema)].slice(-MAX_HISTORY),
+      future: [],
+    }));
   },
   updatePageSettings: (patch) => {
     const { schema } = get();

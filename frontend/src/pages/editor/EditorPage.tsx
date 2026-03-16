@@ -59,6 +59,8 @@ export default function EditorPage() {
     updateSelectedVariables,
     updateNodeScripts,
     updateSelectedScripts,
+    updatePageVariables,
+    updatePageScripts,
     updatePageSettings,
     bringSelectedToFront,
     sendSelectedToBack,
@@ -265,6 +267,8 @@ export default function EditorPage() {
               onVariablesChange={updateSelectedVariables}
               onNodeScriptsChange={updateNodeScripts}
               onScriptsChange={updateSelectedScripts}
+              onPageVariablesChange={updatePageVariables}
+              onPageScriptsChange={updatePageScripts}
               onPageSettingsChange={updatePageSettings}
             />
           </aside>

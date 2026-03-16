@@ -8,7 +8,29 @@ export const inputProtocol: ComponentProtocolDefinition = {
     '常与按钮、表格、列表一起组成查询区。',
     '如果是设备筛选或报警检索，应给出明确 placeholder。',
   ],
-  supportedEvents: ['onOpen', 'onClose', 'onClick'],
+  supportedEvents: [
+    {
+      key: 'onOpen',
+      label: '组件打开时',
+      summary: '输入框初始化显示时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+    {
+      key: 'onClose',
+      label: '组件关闭时',
+      summary: '输入框退出显示时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+    {
+      key: 'onClick',
+      label: '组件点击时',
+      summary: '用户点击输入框时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+  ],
   supportedMethods: [
     {
       name: 'Ctx.message.info',

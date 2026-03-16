@@ -9,7 +9,22 @@ export const chartProtocol: ComponentProtocolDefinition = {
     '工业趋势图优先采用折线图，并给出时间轴。',
     '多指标趋势建议统一颜色和图例命名。',
   ],
-  supportedEvents: ['onOpen', 'onClose'],
+  supportedEvents: [
+    {
+      key: 'onOpen',
+      label: '组件打开时',
+      summary: '图表初始化或首次装载数据时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+    {
+      key: 'onClose',
+      label: '组件关闭时',
+      summary: '图表离开运行态时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+  ],
   supportedMethods: [
     {
       name: 'Ctx.message.info',

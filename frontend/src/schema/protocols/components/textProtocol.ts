@@ -9,7 +9,22 @@ export const textProtocol: ComponentProtocolDefinition = {
     '状态文案建议与告警色和背景色形成强对比。',
     'AI 生成文本时，应尽量使用业务语义明确的中文短句。',
   ],
-  supportedEvents: ['onOpen', 'onClose'],
+  supportedEvents: [
+    {
+      key: 'onOpen',
+      label: '组件打开时',
+      summary: '文本组件初始化显示时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+    {
+      key: 'onClose',
+      label: '组件关闭时',
+      summary: '文本组件退出显示时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+  ],
   supportedMethods: [
     {
       name: 'Ctx.message.success',

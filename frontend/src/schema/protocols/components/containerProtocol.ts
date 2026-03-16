@@ -11,7 +11,22 @@ export const containerProtocol: ComponentProtocolDefinition = {
     '容器自身支持背景色、内边距和圆角，用于形成视觉边界。',
     '后续可以扩展内部绝对定位子节点，因此 AI 生成复杂分区时优先使用容器。',
   ],
-  supportedEvents: ['onOpen', 'onClose'],
+  supportedEvents: [
+    {
+      key: 'onOpen',
+      label: '组件打开时',
+      summary: '容器进入运行态时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+    {
+      key: 'onClose',
+      label: '组件关闭时',
+      summary: '容器离开运行态时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+  ],
   supportedMethods: [
     {
       name: 'Ctx.message.info',

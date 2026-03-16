@@ -8,7 +8,22 @@ export const tableProtocol: ComponentProtocolDefinition = {
     '表格适合承载二维结构数据，列定义与数据源必须成对生成。',
     '工业场景下建议控制列数，保证大屏阅读效率。',
   ],
-  supportedEvents: ['onOpen', 'onClose'],
+  supportedEvents: [
+    {
+      key: 'onOpen',
+      label: '组件打开时',
+      summary: '表格初始化加载数据时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+    {
+      key: 'onClose',
+      label: '组件关闭时',
+      summary: '表格离开运行态时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+  ],
   supportedMethods: [
     {
       name: 'Ctx.message.warning',

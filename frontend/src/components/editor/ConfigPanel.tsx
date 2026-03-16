@@ -24,11 +24,11 @@ import {
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { findNodeById, type ComponentNode, type ComponentScripts, type ComponentVariable, type ComponentVariableType, type PageSchema } from '../../schema/pageSchema';
-import { pageCanvasProtocol } from '../../schema/componentProtocol';
+import { findNodeById, flattenNodes, type ComponentNode, type ComponentScripts, type ComponentVariable, type ComponentVariableType, type PageSchema, type PageScripts } from '../../schema/pageSchema';
+import { getComponentProtocol, pageCanvasProtocol } from '../../schema/componentProtocol';
 
 type PanelSection = 'props' | 'variables' | 'events';
-type ScriptEntryKey = 'onOpen' | 'onClose' | 'onClick';
+type ScriptEntryKey = keyof ComponentScripts | keyof PageScripts;
 type WorkspaceTab = 'propsJson' | ScriptEntryKey;
 
 type FloatingTarget =
@@ -51,7 +51,8 @@ interface FloatingWindowState {
 
 interface EditorWindowState extends FloatingWindowState {
     id: string;
-    nodeId: string;
+    targetKind: 'node' | 'page';
+    targetId: string;
     activeTab: WorkspaceTab;
 }
 
@@ -67,32 +68,6 @@ interface EditorOpenRequest {
     nodeId: string;
     nonce: number;
 }
-
-const scriptEntries: Array<{
-    key: ScriptEntryKey;
-    fileName: string;
-    label: string;
-    summary: string;
-}> = [
-    {
-        key: 'onOpen',
-        fileName: 'onOpen.js',
-        label: '打开时',
-        summary: '组件进入页面或预览初始化时执行。',
-    },
-    {
-        key: 'onClose',
-        fileName: 'onClose.js',
-        label: '关闭时',
-        summary: '组件离开页面或预览销毁时执行。',
-    },
-    {
-        key: 'onClick',
-        fileName: 'onClick.js',
-        label: '被点击时',
-        summary: '用户点击组件后执行。',
-    },
-];
 
 const variableTypeOptions: Array<{
     label: string;
@@ -126,7 +101,11 @@ function createVariableDraft()
     };
 }
 
-function createEditorWindow(node_id: string, offset_index: number)
+function createEditorWindow(
+    target_kind: 'node' | 'page',
+    target_id: string,
+    offset_index: number,
+)
 {
     const width = Math.min(920, window.innerWidth - 80);
     const height = Math.min(620, window.innerHeight - 120);
@@ -134,8 +113,9 @@ function createEditorWindow(node_id: string, offset_index: number)
     const center_y = Math.max(20, Math.round((window.innerHeight - height) / 2));
 
     return {
-        id: `editor-${node_id}`,
-        nodeId: node_id,
+        id: `editor-${target_kind}-${target_id}`,
+        targetKind: target_kind,
+        targetId: target_id,
         activeTab: 'propsJson' as WorkspaceTab,
         visible: true,
         maximized: false,
@@ -162,6 +142,21 @@ function buildPropsDraft(node: ComponentNode | null)
     return JSON.stringify(node?.props || {}, null, 2);
 }
 
+function buildPagePropsDraft(page: PageSchema)
+{
+    return JSON.stringify(page.root.props || {}, null, 2);
+}
+
+function buildEventFileName(event_key: string)
+{
+    return `${event_key}.js`;
+}
+
+function isPageWindow(window_item: EditorWindowState)
+{
+    return window_item.targetKind === 'page';
+}
+
 export default function ConfigPanel({
     page,
     node,
@@ -179,6 +174,8 @@ export default function ConfigPanel({
     onVariablesChange,
     onNodeScriptsChange,
     onScriptsChange,
+    onPageVariablesChange,
+    onPageScriptsChange,
     onPageSettingsChange,
 }: {
     page: PageSchema;
@@ -197,6 +194,8 @@ export default function ConfigPanel({
     onVariablesChange: (variables: ComponentVariable[]) => void;
     onNodeScriptsChange: (nodeId: string, patch: Partial<ComponentScripts>) => void;
     onScriptsChange: (patch: Partial<ComponentScripts>) => void;
+    onPageVariablesChange: (variables: ComponentVariable[]) => void;
+    onPageScriptsChange: (patch: Partial<PageScripts>) => void;
     onPageSettingsChange: (patch: Record<string, unknown>) => void;
 }) {
     const [panelSection, setPanelSection] = useState<PanelSection>('props');
@@ -216,22 +215,37 @@ export default function ConfigPanel({
         [focusedEditorId, openEditors],
     );
     const focusedNode = useMemo(
-        () => (focusedWindow ? findNodeById(page.root, focusedWindow.nodeId) : null),
+        () => (
+            focusedWindow && focusedWindow.targetKind === 'node'
+                ? findNodeById(page.root, focusedWindow.targetId)
+                : null
+        ),
         [focusedWindow, page.root],
     );
+    const componentEvents = useMemo(
+        () => (node ? getComponentProtocol(node.type).supportedEvents : []),
+        [node],
+    );
+    const pageEvents = pageCanvasProtocol.supportedEvents;
 
     useEffect(() => {
         setPropsDraft(buildPropsDraft(node));
     }, [node]);
 
     useEffect(() => {
+        const valid_window_ids = new Set<string>([`editor-page-${page.id}`]);
+
+        flattenNodes(page.root).forEach((item) => {
+            valid_window_ids.add(`editor-node-${item.id}`);
+        });
+
         setOpenEditors((previous) =>
-            previous.filter((item) => findNodeById(page.root, item.nodeId)),
+            previous.filter((item) => valid_window_ids.has(item.id)),
         );
         setEditorOrder((previous) =>
-            previous.filter((item) => findNodeById(page.root, item.replace('editor-', ''))),
+            previous.filter((item) => valid_window_ids.has(item)),
         );
-    }, [page.root]);
+    }, [page.id, page.root]);
 
     useEffect(() => {
         const handleWindowMouseMove = (event: MouseEvent) => {
@@ -350,7 +364,7 @@ export default function ConfigPanel({
             return;
         }
 
-        const window_id = `editor-${node_id}`;
+        const window_id = `editor-node-${node_id}`;
         const exists = openEditors.find((item) => item.id === window_id);
 
         if (exists) {
@@ -372,13 +386,48 @@ export default function ConfigPanel({
             return;
         }
 
-        const next_window = createEditorWindow(node_id, openEditors.length);
+        const next_window = createEditorWindow('node', node_id, openEditors.length);
         next_window.activeTab = initial_tab;
         setOpenEditors((previous) => [...previous, next_window]);
         setEditorOrder((previous) => [...previous, next_window.id]);
         setEditorDrafts((previous) => ({
             ...previous,
             [next_window.id]: buildPropsDraft(target_node),
+        }));
+        setFocusedEditorId(next_window.id);
+        ensureAiWindowVisible();
+    };
+
+    const openEditorForPage = (initial_tab: Exclude<WorkspaceTab, 'propsJson'> | 'propsJson') => {
+        const window_id = `editor-page-${page.id}`;
+        const exists = openEditors.find((item) => item.id === window_id);
+
+        if (exists) {
+            setOpenEditors((previous) =>
+                previous.map((item) =>
+                    item.id === window_id
+                        ? { ...item, visible: true, activeTab: initial_tab }
+                        : item,
+                ),
+            );
+            bringEditorToFront(window_id);
+            ensureAiWindowVisible();
+            if (!editorDrafts[window_id]) {
+                setEditorDrafts((previous) => ({
+                    ...previous,
+                    [window_id]: buildPagePropsDraft(page),
+                }));
+            }
+            return;
+        }
+
+        const next_window = createEditorWindow('page', page.id, openEditors.length);
+        next_window.activeTab = initial_tab;
+        setOpenEditors((previous) => [...previous, next_window]);
+        setEditorOrder((previous) => [...previous, next_window.id]);
+        setEditorDrafts((previous) => ({
+            ...previous,
+            [next_window.id]: buildPagePropsDraft(page),
         }));
         setFocusedEditorId(next_window.id);
         ensureAiWindowVisible();
@@ -486,12 +535,17 @@ export default function ConfigPanel({
         };
     };
 
-    const applyRawPropsForNode = (window_id: string, node_id: string) => {
+    const applyRawProps = (window_item: EditorWindowState) => {
+        const window_id = window_item.id;
         const draft_value = editorDrafts[window_id] || '{}';
 
         try {
             const parsed = JSON.parse(draft_value) as Record<string, unknown>;
-            onNodePropsReplace(node_id, parsed);
+            if (window_item.targetKind === 'page') {
+                onPageSettingsChange(parsed);
+            } else {
+                onNodePropsReplace(window_item.targetId, parsed);
+            }
             message.success('属性 JSON 已应用');
         } catch {
             message.error('属性 JSON 解析失败');
@@ -499,16 +553,26 @@ export default function ConfigPanel({
     };
 
     const updateCurrentScript = (
-        node_id: string,
+        target_kind: 'node' | 'page',
+        target_id: string,
         script_key: ScriptEntryKey,
         value: string,
     ) => {
-        if (script_key === 'onOpen') {
-            onNodeScriptsChange(node_id, { onOpen: value, onLoad: value });
+        if (target_kind === 'page') {
+            onPageScriptsChange({
+                [script_key as keyof PageScripts]: value,
+            } as Partial<PageScripts>);
             return;
         }
 
-        onNodeScriptsChange(node_id, { [script_key]: value });
+        if (script_key === 'onOpen') {
+            onNodeScriptsChange(target_id, { onOpen: value, onLoad: value });
+            return;
+        }
+
+        onNodeScriptsChange(target_id, {
+            [script_key as keyof ComponentScripts]: value,
+        } as Partial<ComponentScripts>);
     };
 
     const updateVariable = (
@@ -581,6 +645,14 @@ export default function ConfigPanel({
                     value={Number(page.root.props.gridSize || 20)}
                     onChange={(value) => onPageSettingsChange({ gridSize: Number(value || 20) })}
                 />
+                <Typography.Text className="config-label">定时脚本间隔(ms)</Typography.Text>
+                <InputNumber
+                    min={0}
+                    step={100}
+                    style={{ width: '100%' }}
+                    value={Number(page.root.props.timerIntervalMs || 0)}
+                    onChange={(value) => onPageSettingsChange({ timerIntervalMs: Number(value || 0) })}
+                />
             </Space>
         ),
     };
@@ -603,6 +675,115 @@ export default function ConfigPanel({
                             message="页面协议已预留给 AI"
                             description="后续 AI 副驾驶可直接读取页面画布协议和组件协议，生成坐标、属性与脚本。"
                         />
+                        <div className="config-item-card">
+                            <div className="config-item-card-head">
+                                <div>
+                                    <Typography.Text strong>页面变量</Typography.Text>
+                                    <Typography.Paragraph className="editor-preview-hint">
+                                        页面级变量可被打开、定时和变量变化脚本共享使用。
+                                    </Typography.Paragraph>
+                                </div>
+                                <Button
+                                    type="dashed"
+                                    icon={<PlusOutlined />}
+                                    onClick={() => onPageVariablesChange([...page.variables, createVariableDraft()])}
+                                >
+                                    新建变量
+                                </Button>
+                            </div>
+                            {page.variables.length === 0 ? (
+                                <Empty description="当前页面还没有变量" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                            ) : (
+                                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                                    {page.variables.map((item) => (
+                                        <div key={item.id} className="config-item-card">
+                                            <div className="config-item-card-head">
+                                                <Typography.Text strong>{item.name}</Typography.Text>
+                                                <Button
+                                                    type="text"
+                                                    danger
+                                                    icon={<DeleteOutlined />}
+                                                    onClick={() => onPageVariablesChange(page.variables.filter((variable) => variable.id !== item.id))}
+                                                />
+                                            </div>
+                                            <div>
+                                                <Typography.Text className="config-label">变量名</Typography.Text>
+                                                <Input
+                                                    value={item.name}
+                                                    onChange={(event) => onPageVariablesChange(
+                                                        page.variables.map((variable) => (
+                                                            variable.id === item.id
+                                                                ? { ...variable, name: event.target.value }
+                                                                : variable
+                                                        )),
+                                                    )}
+                                                />
+                                            </div>
+                                            <div>
+                                                <Typography.Text className="config-label">变量类型</Typography.Text>
+                                                <Select
+                                                    style={{ width: '100%' }}
+                                                    options={variableTypeOptions}
+                                                    value={item.type}
+                                                    onChange={(value) => onPageVariablesChange(
+                                                        page.variables.map((variable) => (
+                                                            variable.id === item.id
+                                                                ? { ...variable, type: value }
+                                                                : variable
+                                                        )),
+                                                    )}
+                                                />
+                                            </div>
+                                            <div>
+                                                <Typography.Text className="config-label">初始值</Typography.Text>
+                                                <Input
+                                                    value={item.initialValue}
+                                                    onChange={(event) => onPageVariablesChange(
+                                                        page.variables.map((variable) => (
+                                                            variable.id === item.id
+                                                                ? { ...variable, initialValue: event.target.value }
+                                                                : variable
+                                                        )),
+                                                    )}
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </Space>
+                            )}
+                        </div>
+                        <div className="config-item-card">
+                            <div className="config-item-card-head">
+                                <div>
+                                    <Typography.Text strong>页面事件</Typography.Text>
+                                    <Typography.Paragraph className="editor-preview-hint">
+                                        页面脚本通过统一协议驱动，AI 与运行时共享同一份事件定义。
+                                    </Typography.Paragraph>
+                                </div>
+                                <Button type="primary" onClick={() => openEditorForPage('propsJson')}>
+                                    打开页面编辑器
+                                </Button>
+                            </div>
+                            <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                                {pageEvents.map((item) => (
+                                    <div key={item.key} className="event-script-preview">
+                                        <div className="event-script-preview-head">
+                                            <Tag>{buildEventFileName(item.key)}</Tag>
+                                            <Typography.Text strong>{item.label}</Typography.Text>
+                                        </div>
+                                        <Typography.Paragraph className="editor-preview-hint">
+                                            {item.summary}
+                                        </Typography.Paragraph>
+                                        <pre className="event-script-preview-code">
+                                            {buildScriptPreview(page.scripts[item.key as keyof PageScripts] || '')}
+                                        </pre>
+                                        <Button type="primary" onClick={() => openEditorForPage(item.key as ScriptEntryKey)}>
+                                            编辑脚本
+                                        </Button>
+                                    </div>
+                                ))}
+                            </Space>
+                        </div>
                         <Typography.Text strong>{pageCanvasProtocol.title}</Typography.Text>
                         <Typography.Paragraph type="secondary">
                             {pageCanvasProtocol.summary}
@@ -813,7 +994,7 @@ export default function ConfigPanel({
                                         {code_button_name}
                                     </Button>
                                 </div>
-                                {scriptEntries.map((item) => (
+                                {componentEvents.map((item) => (
                                     <div key={item.key} className="config-item-card">
                                         <div className="config-item-card-head">
                                             <div>
@@ -822,17 +1003,22 @@ export default function ConfigPanel({
                                                     {item.summary}
                                                 </Typography.Paragraph>
                                             </div>
-                                            <Button type="primary" onClick={() => openEditorForNode(node.id, item.key)}>
+                                            <Button
+                                                type="primary"
+                                                onClick={() => openEditorForNode(node.id, item.key as WorkspaceTab)}
+                                            >
                                                 编辑脚本
                                             </Button>
                                         </div>
                                         <div className="event-script-preview">
                                             <div className="event-script-preview-head">
-                                                <Tag>{item.fileName}</Tag>
+                                                <Tag>{buildEventFileName(item.key)}</Tag>
                                                 <Typography.Text type="secondary">{node.name}</Typography.Text>
                                             </div>
                                             <pre className="event-script-preview-code">
-                                                {buildScriptPreview(node.scripts[item.key] || '')}
+                                                {buildScriptPreview(
+                                                    node.scripts[item.key as keyof ComponentScripts] || '',
+                                                )}
                                             </pre>
                                         </div>
                                     </div>
@@ -844,14 +1030,32 @@ export default function ConfigPanel({
             </div>
             <div className="floating-window-layer">
                 {openEditors.map((window_item) => {
-                    const target_node = findNodeById(page.root, window_item.nodeId);
-                    const props_draft = editorDrafts[window_item.id] || buildPropsDraft(target_node);
+                    const target_node =
+                        window_item.targetKind === 'node'
+                            ? findNodeById(page.root, window_item.targetId)
+                            : null;
+                    const window_events =
+                        window_item.targetKind === 'page'
+                            ? pageEvents
+                            : target_node
+                                ? getComponentProtocol(target_node.type).supportedEvents
+                                : [];
+                    const props_draft = editorDrafts[window_item.id]
+                        || (window_item.targetKind === 'page'
+                            ? buildPagePropsDraft(page)
+                            : buildPropsDraft(target_node));
                     const active_script =
-                        target_node && window_item.activeTab !== 'propsJson'
-                            ? target_node.scripts[window_item.activeTab] || ''
+                        window_item.activeTab !== 'propsJson'
+                            ? window_item.targetKind === 'page'
+                                ? page.scripts[window_item.activeTab as keyof PageScripts] || ''
+                                : target_node?.scripts[window_item.activeTab as keyof ComponentScripts] || ''
                             : '';
 
-                    if (!target_node || !window_item.visible) {
+                    if (!window_item.visible) {
+                        return null;
+                    }
+
+                    if (window_item.targetKind === 'node' && !target_node) {
                         return null;
                     }
 
@@ -871,9 +1075,13 @@ export default function ConfigPanel({
                                 onMouseDown={(event) => beginDrag({ kind: 'editor', windowId: window_item.id }, event)}
                             >
                                 <div>
-                                    <Typography.Text strong>{target_node.name}</Typography.Text>
+                                    <Typography.Text strong>
+                                        {window_item.targetKind === 'page' ? page.name : target_node?.name}
+                                    </Typography.Text>
                                     <div className="floating-tool-window-subtitle">
-                                        {target_node.title} / {target_node.id}
+                                        {window_item.targetKind === 'page'
+                                            ? `页面脚本工作区 / ${page.id}`
+                                            : `${target_node?.title} / ${target_node?.id}`}
                                     </div>
                                 </div>
                                 <Space size={8}>
@@ -887,8 +1095,16 @@ export default function ConfigPanel({
                             </div>
                             <div className="floating-tool-window-toolbar">
                                 <div className="floating-toolbar-meta">
-                                    <Typography.Text type="secondary">组件 ID：{target_node.id}</Typography.Text>
-                                    <Typography.Text type="secondary">组件 Name：{target_node.name}</Typography.Text>
+                                    <Typography.Text type="secondary">
+                                        {window_item.targetKind === 'page'
+                                            ? `页面 ID：${page.id}`
+                                            : `组件 ID：${target_node?.id}`}
+                                    </Typography.Text>
+                                    <Typography.Text type="secondary">
+                                        {window_item.targetKind === 'page'
+                                            ? `页面 Name：${page.name}`
+                                            : `组件 Name：${target_node?.name}`}
+                                    </Typography.Text>
                                 </div>
                                 <Segmented
                                     block
@@ -905,8 +1121,8 @@ export default function ConfigPanel({
                                     }}
                                     options={[
                                         { label: 'props.json', value: 'propsJson' },
-                                        ...scriptEntries.map((item) => ({
-                                            label: item.fileName,
+                                        ...window_events.map((item) => ({
+                                            label: buildEventFileName(item.key),
                                             value: item.key,
                                         })),
                                     ]}
@@ -947,7 +1163,8 @@ export default function ConfigPanel({
                                         }}
                                         onChange={(value) => {
                                             updateCurrentScript(
-                                                target_node.id,
+                                                window_item.targetKind,
+                                                window_item.targetId,
                                                 window_item.activeTab as ScriptEntryKey,
                                                 value || '',
                                             );
@@ -968,11 +1185,11 @@ export default function ConfigPanel({
                                     当前文件：{
                                         window_item.activeTab === 'propsJson'
                                             ? 'props.json'
-                                            : scriptEntries.find((item) => item.key === window_item.activeTab)?.fileName
+                                            : buildEventFileName(String(window_item.activeTab))
                                     }
                                 </Typography.Text>
                                 {window_item.activeTab === 'propsJson' ? (
-                                    <Button size="small" type="primary" onClick={() => applyRawPropsForNode(window_item.id, target_node.id)}>
+                                    <Button size="small" type="primary" onClick={() => applyRawProps(window_item)}>
                                         应用 JSON
                                     </Button>
                                 ) : null}
@@ -1005,8 +1222,14 @@ export default function ConfigPanel({
                                     ? `当前准备处理 ${focusedNode.name} 的 ${
                                         focusedWindow.activeTab === 'propsJson'
                                             ? 'props.json'
-                                            : scriptEntries.find((item) => item.key === focusedWindow.activeTab)?.fileName
+                                            : buildEventFileName(String(focusedWindow.activeTab))
                                     }。`
+                                    : focusedWindow && focusedWindow.targetKind === 'page'
+                                        ? `当前准备处理页面 ${page.name} 的 ${
+                                            focusedWindow.activeTab === 'propsJson'
+                                                ? 'props.json'
+                                                : buildEventFileName(String(focusedWindow.activeTab))
+                                        }。`
                                     : '当前还没有聚焦的编辑器，点击任意打开的编辑器后，AI 会跟随该内容。'}
                             </Typography.Paragraph>
                             <div className="ai-window-placeholder-list">
@@ -1017,7 +1240,7 @@ export default function ConfigPanel({
                                     文件：{focusedWindow
                                         ? focusedWindow.activeTab === 'propsJson'
                                             ? 'props.json'
-                                            : scriptEntries.find((item) => item.key === focusedWindow.activeTab)?.fileName
+                                            : buildEventFileName(String(focusedWindow.activeTab))
                                         : '未聚焦'}
                                 </Typography.Paragraph>
                                 <Typography.Paragraph className="protocol-paragraph">

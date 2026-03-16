@@ -8,7 +8,29 @@ export const buttonProtocol: ComponentProtocolDefinition = {
     '按钮应绑定 onClick 脚本，避免成为纯展示元素。',
     '操作型按钮文案应直接表达动作，例如“刷新状态”“确认联动”。',
   ],
-  supportedEvents: ['onOpen', 'onClose', 'onClick'],
+  supportedEvents: [
+    {
+      key: 'onOpen',
+      label: '组件打开时',
+      summary: '按钮初始化显示时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+    {
+      key: 'onClose',
+      label: '组件关闭时',
+      summary: '按钮退出显示时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+    {
+      key: 'onClick',
+      label: '组件点击时',
+      summary: '用户点击按钮时执行。',
+      scope: 'component',
+      sharedWithAi: true,
+    },
+  ],
   supportedMethods: [
     {
       name: 'Ctx.message.success',

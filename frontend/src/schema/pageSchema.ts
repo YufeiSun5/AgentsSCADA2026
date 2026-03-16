@@ -19,6 +19,13 @@ export interface ComponentScripts {
   onClick?: string;
 }
 
+export interface PageScripts {
+  onOpen?: string;
+  onClose?: string;
+  onTimer?: string;
+  onVariableChange?: string;
+}
+
 export interface ComponentNode {
   id: string;
   type: ComponentType;
@@ -36,6 +43,8 @@ export interface PageSchema {
   description: string;
   status: PageStatus;
   updatedAt: string;
+  variables: ComponentVariable[];
+  scripts: PageScripts;
   root: ComponentNode;
 }
 
@@ -216,6 +225,13 @@ export function createEmptyPageSchema(name = '未命名页面'): PageSchema {
     description: '基于 JSON Schema 的页面描述对象。',
     status: 'draft',
     updatedAt: new Date().toISOString(),
+    variables: [],
+    scripts: {
+      onOpen: '',
+      onClose: '',
+      onTimer: '',
+      onVariableChange: '',
+    },
     root: {
       id: createId('root'),
       type: 'container',
@@ -226,6 +242,7 @@ export function createEmptyPageSchema(name = '未命名页面'): PageSchema {
         canvasHeight: 900,
         background: '#081622',
         gridSize: 20,
+        timerIntervalMs: 0,
         padding: 0,
         borderRadius: 24,
         minHeight: 560,
@@ -301,12 +318,20 @@ export function normalizePageSchema(schema: PageSchema): PageSchema {
     canvasWidth: toNumber(normalizedRoot.props.canvasWidth, 1600),
     canvasHeight: toNumber(normalizedRoot.props.canvasHeight, 900),
     gridSize: toNumber(normalizedRoot.props.gridSize, 20),
+    timerIntervalMs: toNumber(normalizedRoot.props.timerIntervalMs, 0),
     background: String(normalizedRoot.props.background || '#081622'),
     borderRadius: toNumber(normalizedRoot.props.borderRadius, 24),
   };
 
   return {
     ...schema,
+    variables: Array.isArray(schema.variables) ? schema.variables : [],
+    scripts: {
+      onOpen: String(schema.scripts?.onOpen || ''),
+      onClose: String(schema.scripts?.onClose || ''),
+      onTimer: String(schema.scripts?.onTimer || ''),
+      onVariableChange: String(schema.scripts?.onVariableChange || ''),
+    },
     root: normalizedRoot,
   };
 }

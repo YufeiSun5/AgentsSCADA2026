@@ -1,5 +1,15 @@
 import type { ComponentType } from '../pageSchema';
 
+export type ProtocolEventScope = 'page' | 'component';
+
+export interface ProtocolEventDefinition {
+  key: string;
+  label: string;
+  summary: string;
+  scope: ProtocolEventScope;
+  sharedWithAi: boolean;
+}
+
 export interface ProtocolMethodDefinition {
   name: string;
   summary: string;
@@ -21,7 +31,7 @@ export interface ComponentProtocolDefinition {
   title: string;
   summary: string;
   usage: string[];
-  supportedEvents: string[];
+  supportedEvents: ProtocolEventDefinition[];
   supportedMethods: ProtocolMethodDefinition[];
   properties: ProtocolPropertyDefinition[];
   aiHints: string[];
@@ -32,5 +42,6 @@ export interface PageProtocolDefinition {
   summary: string;
   usage: string[];
   properties: ProtocolPropertyDefinition[];
+  supportedEvents: ProtocolEventDefinition[];
   aiHints: string[];
 }

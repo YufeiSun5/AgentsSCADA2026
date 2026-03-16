@@ -9,6 +9,12 @@ export interface ScriptContext {
   };
   page: PageSchema;
   node: ComponentNode;
+  pageVariables?: Record<string, unknown>;
+  setPageVariable?: (name: string, value: unknown) => void;
+  variableChange?: {
+    name: string;
+    value: unknown;
+  };
 }
 
 export async function executeScript(script: string | undefined, context: ScriptContext) {
