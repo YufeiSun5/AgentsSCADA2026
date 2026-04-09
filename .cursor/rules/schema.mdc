@@ -1,0 +1,15 @@
+---
+description: JSON Schema and component protocol editing rules
+globs: ["frontend/src/schema/**"]
+alwaysApply: false
+---
+
+Before editing these files, read:
+- `AGENTS.md`
+- `.ai/instructions/schema-protocol.md`
+
+Rules:
+- Every component protocol must include `aiHints` array.
+- Protocol `type` must match `ComponentType` union value exactly.
+- Register new protocols in `protocols/index.ts` componentProtocols map.
+- `componentProtocol.ts` is a compatibility re-export layer — add new code in `./protocols/`.

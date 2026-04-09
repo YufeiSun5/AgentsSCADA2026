@@ -1,3 +1,4 @@
+import { RobotOutlined } from '@ant-design/icons';
 import { Button, Space, Tag, Typography } from 'antd';
 import type { PageSchema } from '../../schema/pageSchema';
 
@@ -5,18 +6,22 @@ export default function EditorToolbar({
   schema,
   canUndo,
   canRedo,
+  aiVisible,
   onSave,
   onUndo,
   onRedo,
   onPreview,
+  onToggleAiAssistant,
 }: {
   schema: PageSchema;
   canUndo: boolean;
   canRedo: boolean;
+  aiVisible: boolean;
   onSave: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onPreview: () => void;
+  onToggleAiAssistant: () => void;
 }) {
   return (
     <div className="editor-toolbar">
@@ -30,6 +35,9 @@ export default function EditorToolbar({
         </Space>
       </div>
       <Space wrap>
+        <Button icon={<RobotOutlined />} type={aiVisible ? 'primary' : 'default'} onClick={onToggleAiAssistant}>
+          {aiVisible ? '隐藏 AI 编排' : '打开 AI 编排'}
+        </Button>
         <Button onClick={onUndo} disabled={!canUndo}>
           撤销
         </Button>

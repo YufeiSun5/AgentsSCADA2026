@@ -10,7 +10,14 @@ interface EditorState {
   dragSnapshot: PageSchema | null;
   setSchema: (schema: PageSchema) => void;
   selectNode: (nodeId: string | null) => void;
-  addNode: (type: ComponentType, position?: CanvasPosition) => void;
+  addNode: (
+    type: ComponentType,
+    position?: CanvasPosition,
+    options?: {
+      title?: string;
+      props?: Record<string, unknown>;
+    },
+  ) => string | null;
   startNodeMove: (nodeId: string) => void;
   moveNode: (activeId: string, delta: CanvasPosition) => void;
   commitNodeMove: () => void;
@@ -149,13 +156,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   dragSnapshot: null,
   setSchema: (schema) => set({ schema: normalizePageSchema(cloneSchema(schema)), selectedId: null, history: [], future: [], dragSnapshot: null }),
   selectNode: (nodeId) => set({ selectedId: nodeId }),
-  addNode: (type, position) => {
+  addNode: (type, position, options) => {
     const current = get().schema;
     if (!current) {
-      return;
+      return null;
     }
 
     const nextNode = createComponentNode(type);
+    nextNode.title = options?.title || nextNode.title;
+    nextNode.props = {
+      ...nextNode.props,
+      ...(options?.props || {}),
+    };
+
     const nextSchema = buildNextState(current, (draft) => {
       const canvasWidth = Number(draft.root.props.canvasWidth || 1600);
       const canvasHeight = Number(draft.root.props.canvasHeight || 900);
@@ -174,6 +187,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       history: [...state.history, cloneSchema(current)].slice(-MAX_HISTORY),
       future: [],
     }));
+
+    return nextNode.id;
   },
   startNodeMove: (nodeId) => {
     const { schema, dragSnapshot } = get();

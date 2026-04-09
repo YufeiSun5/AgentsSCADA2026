@@ -1,0 +1,95 @@
+spring:
+  application:
+    name: scada-backend
+
+  profiles:
+    active: dev   # 切换环境：dev / prod
+
+  # ===== 虚拟线程（Java 21，Spring Boot 3.2+）=====
+  threads:
+    virtual:
+      enabled: true
+
+  # ===== 数据源 =====
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/scada}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ===== Flyway 自动建表 / 迁移 =====
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true   # 已有数据库时自动打基线，不报错
+
+  # ===== Jackson =====
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+    default-property-inclusion: non_null
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+# ===== MyBatis Plus =====
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.scada.domain.entity
+  global-config:
+    db-config:
+      id-type: auto           # 使用数据库自增 BIGSERIAL
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: false      # 不用 MyBatis 一级/二级缓存，避免分布式缓存一致性问题
+
+# ===== 应用自定义配置 =====
+scada:
+
+  # JWT 配置
+  jwt:
+    secret: ${JWT_SECRET:ChangeThisSecretInProductionAtLeast256BitsLong!!}
+    expire-hours: 24          # Token 有效期（小时）
+
+  # MQTT Broker
+  mqtt:
+    broker-url: ${MQTT_BROKER:tcp://localhost:1883}
+    client-id: scada-server-main
+    username: ${MQTT_USERNAME:}
+    password: ${MQTT_PASSWORD:}
+    topic-pattern: "device/+/data"   # 通配符订阅所有网关
+    partition-count: 8               # 分区数，建议 8~16
+
+  # AI 代理
+  ai:
+    # API Key 加密密钥（AES-256-GCM），生产环境必须替换，不得使用默认值
+    encryption-key: ${AI_ENCRYPTION_KEY:REPLACE_IN_PRODUCTION_32CHARS!!}
+    # 单次 AI 请求最长超时（秒）
+    request-timeout-seconds: 60
+
+  # 页面编辑锁过期时间（分钟）
+  page-lock:
+    expire-minutes: 5
+    # 前端心跳间隔（分钟），应小于 expire-minutes
+    renew-interval-minutes: 2
+
+# ===== Actuator =====
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized

@@ -485,8 +485,7 @@ a {
 .floating-tool-window-body-ai {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  overflow: hidden;
 }
 
 .ai-window-placeholder-list {
@@ -707,6 +706,141 @@ a {
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.06);
 }
+
+/* ============================================================
+   AI 编排助手浮窗（AiLayoutAssistant）—— 可拖动、紧凑型
+   ============================================================ */
+
+.ai-assistant-window {
+  position: fixed;
+  z-index: 320;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-height: 480px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  background: rgba(13, 21, 42, 0.97);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(20px);
+  overflow: hidden;
+  user-select: none;
+}
+
+.ai-assistant-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  cursor: move;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  flex-shrink: 0;
+}
+
+.ai-assistant-history {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  min-height: 180px;
+  max-height: 320px;
+}
+
+.ai-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  max-width: 92%;
+  word-break: break-word;
+}
+
+.ai-msg-user {
+  align-self: flex-end;
+  background: rgba(14, 165, 233, 0.18);
+  border-bottom-right-radius: 3px;
+}
+
+.ai-msg-assistant {
+  align-self: flex-start;
+  background: rgba(30, 41, 59, 0.9);
+  border-bottom-left-radius: 3px;
+  max-width: 100%;
+}
+
+/* 角色行：左侧标签 + 右侧复制按钮 */
+.ai-msg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.ai-msg-role {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(148, 163, 184, 0.7);
+  letter-spacing: 0.04em;
+}
+
+/* 复制按钮：hover 消息时才显示 */
+.ai-msg-copy {
+  display: none;
+  padding: 1px 3px;
+  border: none;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.55);
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1;
+  transition: color 0.12s, background 0.12s;
+}
+
+.ai-msg:hover .ai-msg-copy {
+  display: flex;
+  align-items: center;
+}
+
+.ai-msg-copy:hover {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.ai-msg-content {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #e2e8f0;
+  white-space: pre-wrap;
+}
+
+.ai-msg-thinking {
+  color: rgba(148, 163, 184, 0.55) !important;
+  font-style: italic;
+}
+
+.ai-assistant-footer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  flex-shrink: 0;
+}
+
+.ai-assistant-footer .ant-input,
+.ai-assistant-footer .ant-input-affix-wrapper,
+.ai-assistant-footer .ant-input-textarea textarea {
+  font-size: 12px;
+  color: #f1f5f9;
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+
 
 @property --ribbon-angle {
   syntax: '<angle>';

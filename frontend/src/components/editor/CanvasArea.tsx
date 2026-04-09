@@ -127,6 +127,8 @@ export default function CanvasArea({
   const canvasWidth = Number(page.root.props.canvasWidth || 1600);
   const canvasHeight = Number(page.root.props.canvasHeight || 900);
   const canvasBackground = String(page.root.props.background || '#081622');
+  const gridSize = Number(page.root.props.gridSize || 20);
+  const borderRadius = Number(page.root.props.borderRadius || 24);
 
   const bindCanvasRef = (element: HTMLDivElement | null) => {
     setNodeRef(element);
@@ -148,6 +150,8 @@ export default function CanvasArea({
               width: canvasWidth,
               height: canvasHeight,
               background: canvasBackground,
+              borderRadius,
+              backgroundSize: `${gridSize}px ${gridSize}px`,
             }}
           >
             {nodes.length === 0 ? (

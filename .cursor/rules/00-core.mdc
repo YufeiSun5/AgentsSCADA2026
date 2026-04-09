@@ -1,0 +1,16 @@
+---
+description: Core project rules - read AGENTS.md for overview and navigation
+globs: ["**/*"]
+alwaysApply: true
+---
+
+Before any task, read:
+- `AGENTS.md` — project overview, tech stack, modules, documentation index
+- `MEMORY.md` — current development progress
+
+Rules:
+- Follow `.ai/instructions/` for all coding standards.
+- All code comments must be in Chinese.
+- Respond in Chinese.
+- When uncertain, mark as `<!-- 待确认 -->`.
+- After completing a task, update `MEMORY.md`.

@@ -1,0 +1,20 @@
+# 生成文件/目录
+/target/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# 环境配置
+application-prod.yml
+
+# Flyway 备份
+*.sql.bak

@@ -1,0 +1,16 @@
+---
+description: Frontend React component and state management rules
+globs: ["**/*.tsx", "**/*.ts", "frontend/src/**"]
+alwaysApply: false
+---
+
+Before editing these files, read:
+- `AGENTS.md`
+- `.ai/instructions/frontend-react.md`
+- `.ai/instructions/coding-style.md`
+
+Rules:
+- One material component per file in `components/materials/`.
+- New components require render file + protocol file + catalog entry.
+- State changes through `editorStore` actions only.
+- Monaco Editor is the only code editor — no overlapping alternatives.

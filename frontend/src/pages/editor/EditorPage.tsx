@@ -14,6 +14,7 @@ import {
 import { Empty, Spin, message } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import AiLayoutAssistant from '../../components/editor/AiLayoutAssistant';
 import CanvasArea, { CANVAS_ROOT_ID } from '../../components/editor/CanvasArea';
 import ConfigPanel from '../../components/editor/ConfigPanel';
 import EditorToolbar from '../../components/editor/EditorToolbar';
@@ -32,6 +33,7 @@ export default function EditorPage() {
   const { pageId = 'demo' } = useParams();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [loading, setLoading] = useState(true);
+  const [aiAssistantVisible, setAiAssistantVisible] = useState(true);
   const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const lastDragDeltaRef = useRef({ x: 0, y: 0 });
@@ -101,6 +103,29 @@ export default function EditorPage() {
   if (!schema) {
     return <Empty description="未找到页面配置" />;
   }
+
+  const revealNodeInCanvas = (nodeId: string) => {
+    selectNode(nodeId);
+    window.requestAnimationFrame(() => {
+      const latest_schema = useEditorStore.getState().schema;
+      const latest_node = latest_schema ? findNodeById(latest_schema.root, nodeId) : null;
+      const canvas_element = canvasRef.current;
+      const scroll_container = canvas_element?.closest('.canvas-stage-scroll');
+
+      if (!latest_node || !scroll_container) {
+        return;
+      }
+
+      const x = Number(latest_node.props.x || 0);
+      const y = Number(latest_node.props.y || 0);
+
+      scroll_container.scrollTo({
+        left: Math.max(0, x - 120),
+        top: Math.max(0, y - 120),
+        behavior: 'smooth',
+      });
+    });
+  };
 
   const handleDragStart = (event: DragStartEvent) => {
     const activeKind = event.active.data.current?.kind;
@@ -195,8 +220,10 @@ export default function EditorPage() {
         schema={schema}
         canUndo={history.length > 0}
         canRedo={future.length > 0}
+        aiVisible={aiAssistantVisible}
         onUndo={undo}
         onRedo={redo}
+        onToggleAiAssistant={() => setAiAssistantVisible((previous) => !previous)}
         onPreview={() => navigate(`/preview/${schema.id}`)}
         onSave={async () => {
           const saved = await savePage(schema);
@@ -274,6 +301,17 @@ export default function EditorPage() {
           </aside>
         </div>
       </DndContext>
+      <AiLayoutAssistant
+        page={schema}
+        selectedNode={selectedNode}
+        visible={aiAssistantVisible}
+        onVisibleChange={setAiAssistantVisible}
+        onRevealNode={revealNodeInCanvas}
+        onAddNode={addNode}
+        onUpdatePageSettings={updatePageSettings}
+        onUpdateNodeProps={updateNodeProps}
+        onUpdateNodeTitle={updateNodeTitle}
+      />
     </div>
   );
 }

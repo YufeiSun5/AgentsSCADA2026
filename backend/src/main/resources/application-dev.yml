@@ -1,0 +1,19 @@
+# 开发环境配置（覆盖 application.yml 中的默认值）
+# 此文件不提交到生产环境，可放入 .gitignore 的同项目 .env 或直接用环境变量
+
+spring:
+  # 开发时打印 SQL 日志
+  datasource:
+    url: jdbc:postgresql://localhost:5432/scada
+    username: postgres
+    password: root
+
+mybatis-plus:
+  configuration:
+    # 开发时打印完整 SQL，生产删掉这行
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+logging:
+  level:
+    com.scada: debug
+    org.springframework.security: debug

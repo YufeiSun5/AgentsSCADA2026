@@ -19,13 +19,17 @@ import {
 } from 'antd';
 import {
     CodeOutlined,
+    CopyOutlined,
     DeleteOutlined,
     PlusOutlined,
+    RobotOutlined,
+    SendOutlined,
 } from '@ant-design/icons';
-import Editor from '@monaco-editor/react';
+import Editor, { DiffEditor } from '@monaco-editor/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { findNodeById, flattenNodes, type ComponentNode, type ComponentScripts, type ComponentVariable, type ComponentVariableType, type PageSchema, type PageScripts } from '../../schema/pageSchema';
 import { getComponentProtocol, pageCanvasProtocol } from '../../schema/componentProtocol';
+import { callAiChat } from '../../services/aiService';
 
 type PanelSection = 'props' | 'variables' | 'events';
 type ScriptEntryKey = keyof ComponentScripts | keyof PageScripts;
@@ -54,6 +58,8 @@ interface EditorWindowState extends FloatingWindowState {
     targetKind: 'node' | 'page';
     targetId: string;
     activeTab: WorkspaceTab;
+    /** 非 null 时进入 Diff 对比模式 */
+    diffProposal: DiffProposal | null;
 }
 
 interface FloatingWindowDragState {
@@ -62,6 +68,13 @@ interface FloatingWindowDragState {
     start_y: number;
     origin_x: number;
     origin_y: number;
+}
+
+/** AI 提议的代码修改，用于 Diff 对比视图 */
+interface DiffProposal {
+    originalCode: string;
+    proposedCode: string;
+    language: string;
 }
 
 interface EditorOpenRequest {
@@ -123,6 +136,71 @@ function createEditorWindow(
         height,
         x: center_x + offset_index * 26,
         y: center_y + offset_index * 20,
+        diffProposal: null as DiffProposal | null,
+    };
+}
+
+/**
+ * 将 patch 对象递归合并到 current 中：
+ * 遍历整棵树，找到第一个包含 patch 全部 key 的对象层，在该层保序更新；
+ * 找不到匹配层时 fallback 到顶层 spread（patch 为全新 key 场景）。
+ */
+function deepMergePatch(
+    current: Record<string, unknown>,
+    patch: Record<string, unknown>,
+): Record<string, unknown> {
+    const patchKeys = Object.keys(patch);
+
+    function applyToNode(node: unknown): { hit: boolean; value: unknown } {
+        if (typeof node !== 'object' || node === null) return { hit: false, value: node };
+
+        if (Array.isArray(node)) {
+            for (let i = 0; i < node.length; i++) {
+                const res = applyToNode(node[i]);
+                if (res.hit) {
+                    const arr = [...node];
+                    arr[i] = res.value;
+                    return { hit: true, value: arr };
+                }
+            }
+            return { hit: false, value: node };
+        }
+
+        const obj = node as Record<string, unknown>;
+        // 当前层包含 patch 所有 key → 在此层原位更新（保持字段顺序）
+        if (patchKeys.every((k) => k in obj)) {
+            const updated = Object.fromEntries(
+                Object.entries(obj).map(([k, v]) => [k, k in patch ? patch[k] : v]),
+            );
+            return { hit: true, value: updated };
+        }
+
+        // 递归子节点，返回第一个命中的层
+        for (const [k, v] of Object.entries(obj)) {
+            const res = applyToNode(v);
+            if (res.hit) {
+                return { hit: true, value: { ...obj, [k]: res.value } };
+            }
+        }
+
+        return { hit: false, value: obj };
+    }
+
+    const res = applyToNode(current);
+    return res.hit
+        ? (res.value as Record<string, unknown>)
+        : { ...current, ...patch }; // fallback：patch 含全新 key
+}
+
+/** 从 AI 回复文本中提取第一个代码块 */
+function extractCodeBlock(text: string): { language: string; code: string } | null
+{
+    // 兼容：有无语言标签、\r\n 换行、代码块前后有说明文字
+    const match = /```(\w+)?\r?\n([\s\S]*?)```/.exec(text);
+    if (!match) return null;
+    return {
+        language: match[1] || 'javascript',
+        code: match[2].trim(),
     };
 }
 
@@ -205,7 +283,35 @@ export default function ConfigPanel({
     const [editorDrafts, setEditorDrafts] = useState<Record<string, string>>({});
     const [aiWindow, setAiWindow] = useState<FloatingWindowState>(default_ai_window);
     const [focusedEditorId, setFocusedEditorId] = useState<string | null>(null);
+    // AI 对话窗口状态
+    const [aiPrompt, setAiPrompt] = useState('');
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiHistory, setAiHistory] = useState<Array<{
+        id: string;
+        role: 'user' | 'assistant';
+        content: string;
+        /** 气泡中显示的文字（user 消息去掉代码上下文后的纯提问） */
+        label?: string;
+        /** 附加上下文的简短描述，显示在气泡下方 */
+        contextHint?: string;
+        /** AI 回复中提取到的代码块，用于展示 Diff 对比按钮 */
+        codeBlock?: { language: string; code: string } | null;
+    }>>([
+        { id: 'init', role: 'assistant', content: '你好！我可以帮你编写和优化组件脚本。告诉我你想实现什么功能就行。' },
+    ]);
+    const aiHistoryRef = useRef<HTMLDivElement>(null);
+    // 当前聚焦的 Monaco 编辑器实例（用于获取选中文本）
+    const activeEditorRef = useRef<any>(null);
+    /** 每个窗口对应的 Monaco DiffEditor 实例 */
+    const diffEditorInstancesRef = useRef<Record<string, any>>({});
+    /** 每个窗口的 diff 导航状态（当前下标 + 总数） */
+    const [diffNavState, setDiffNavState] = useState<Record<string, { currentIdx: number; totalCount: number }>>({});
     const dragStateRef = useRef<FloatingWindowDragState | null>(null);
+
+    // AI 历史自动滚动到底部
+    useEffect(() => {
+        aiHistoryRef.current?.scrollTo({ top: aiHistoryRef.current.scrollHeight, behavior: 'smooth' });
+    }, [aiHistory]);
     const code_button_name = useMemo(
         () => String(node?.props.editorButtonName || '代码编辑器'),
         [node],
@@ -535,6 +641,145 @@ export default function ConfigPanel({
         };
     };
 
+    /** 代码编辑 AI：将用户提问（带上当前文件与选中代码）发给后端 AI */
+    const executeCodePrompt = async (raw: string) => {
+        const text = raw.trim();
+        if (!text || aiLoading) return;
+
+        // 获取当前聚焦窗口的完整代码内容
+        let currentCode = '';
+        if (focusedWindow) {
+            if (focusedWindow.activeTab === 'propsJson') {
+                currentCode = editorDrafts[focusedWindow.id] || (
+                    focusedWindow.targetKind === 'page'
+                        ? buildPagePropsDraft(page)
+                        : buildPropsDraft(focusedNode)
+                );
+            } else if (focusedWindow.targetKind === 'page') {
+                currentCode = page.scripts[focusedWindow.activeTab as keyof PageScripts] || '';
+            } else {
+                currentCode = focusedNode?.scripts[focusedWindow.activeTab as keyof ComponentScripts] || '';
+            }
+        }
+
+        // 获取用户在编辑器中手动选中的代码片段，同时记录行号供精准替换
+        let selectedText = '';
+        let selectionRange: { startLine: number; endLine: number } | null = null;
+        const editorInstance = activeEditorRef.current;
+        if (editorInstance) {
+            const selection = editorInstance.getSelection?.();
+            if (selection && !selection.isEmpty?.()) {
+                selectedText = (editorInstance.getModel?.()?.getValueInRange(selection)) || '';
+                selectionRange = {
+                    startLine: selection.startLineNumber,
+                    endLine:   selection.endLineNumber,
+                };
+            }
+        }
+
+        // 构建包含当前编辑器上下文的用户消息
+        let contextPrefix = '';
+        if (focusedNode && focusedWindow) {
+            const file = focusedWindow.activeTab === 'propsJson'
+                ? 'props.json'
+                : buildEventFileName(String(focusedWindow.activeTab));
+            contextPrefix = `【当前文件】组件名称: ${focusedNode.name}（${focusedNode.type}），文件: ${file}\n`;
+            if (selectedText) {
+                contextPrefix += `【选中代码】\n\`\`\`\n${selectedText}\n\`\`\`\n`;
+            } else if (currentCode) {
+                contextPrefix += `【当前完整代码】\n\`\`\`\n${currentCode}\n\`\`\`\n`;
+            }
+            contextPrefix += '\n';
+        } else if (focusedWindow?.targetKind === 'page') {
+            const file = focusedWindow.activeTab === 'propsJson'
+                ? 'props.json'
+                : buildEventFileName(String(focusedWindow.activeTab));
+            contextPrefix = `【当前文件】页面脚本，文件: ${file}\n`;
+            if (selectedText) {
+                contextPrefix += `【选中代码】\n\`\`\`\n${selectedText}\n\`\`\`\n`;
+            } else if (currentCode) {
+                contextPrefix += `【当前完整代码】\n\`\`\`\n${currentCode}\n\`\`\`\n`;
+            }
+            contextPrefix += '\n';
+        }
+
+        const fullContent = contextPrefix + text;
+        // 计算上下文标注文字（气泡中仅显示用户实际输入）
+        let contextHint: string | undefined;
+        if (focusedWindow) {
+            const file = focusedWindow.activeTab === 'propsJson'
+                ? 'props.json'
+                : buildEventFileName(String(focusedWindow.activeTab));
+            contextHint = selectedText
+                ? `上下文：${file} · 选中代码片段`
+                : currentCode
+                    ? `上下文：${file} · 完整代码`
+                    : `上下文：${file}`;
+        }
+        const userEntry = {
+            id: `user-${Date.now()}`,
+            role: 'user' as const,
+            content: fullContent,
+            label: text,
+            contextHint,
+        };
+        const nextHistory = [...aiHistory, userEntry];
+        setAiHistory(nextHistory);
+        setAiPrompt('');
+        setAiLoading(true);
+
+        // 构建组件列表（仅 id/type/title）
+        const nodes = flattenNodes(page.root)
+            .filter((n) => n.id !== page.root.id)
+            .map((n) => ({ id: n.id, type: n.type, title: n.title }));
+
+        // 将展示历史转换为 API 消息格式
+        const messages = nextHistory.map((e) => ({ role: e.role, content: e.content }));
+
+        try {
+            const result = await callAiChat(messages, nodes);
+            const replyContent = result.reply || '已处理';
+            // 解析 AI 回复中的代码块，如果有则附到消息上以供对比
+            let codeBlock = extractCodeBlock(replyContent);
+
+            // 若 actions 中有 update_node 且目标是当前聚焦节点，
+            // 则把 patch 合入当前 props 并构造 Diff 建议
+            if (!codeBlock && focusedWindow && result.actions.length > 0) {
+                const targetId = focusedWindow.targetKind === 'node' ? focusedWindow.targetId : null;
+                const updateAction = result.actions.find(
+                    (a) => a.type === 'update_node' && a.nodeId === targetId && a.patch,
+                );
+                if (updateAction?.patch && targetId) {
+                    const currentNode = findNodeById(page.root, targetId);
+                    if (currentNode) {
+                        // 复用 applyDiffProposal 的合并 + 格式统一逻辑，
+                        // 传入选区行号实现精准行替换（用户有选区时）
+                        applyDiffProposal(
+                            { language: 'json', code: JSON.stringify(updateAction.patch, null, 2) },
+                            selectionRange,
+                        );
+                        bringEditorToFront(focusedWindow.id);
+                    }
+                }
+            }
+
+            setAiHistory((prev) => [
+                ...prev,
+                { id: `assistant-${Date.now()}`, role: 'assistant' as const, content: replyContent, codeBlock },
+            ]);
+            // AI 回复含代码块时直接打开 Diff 对比，传入选区行号以精准替换
+            if (codeBlock) applyDiffProposal(codeBlock, selectionRange);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setAiHistory((prev) => [
+                ...prev,
+                { id: `assistant-err-${Date.now()}`, role: 'assistant' as const, content: `AI 调用失败：${msg}` },
+            ]);
+        } finally {
+            setAiLoading(false);
+        }
+    };
+
     const applyRawProps = (window_item: EditorWindowState) => {
         const window_id = window_item.id;
         const draft_value = editorDrafts[window_id] || '{}';
@@ -550,6 +795,108 @@ export default function ConfigPanel({
         } catch {
             message.error('属性 JSON 解析失败');
         }
+    };
+
+    /**
+     * 将 AI 代码块作为 Diff 建议推送到当前聚焦的编辑器窗口。
+     * 若传入 selectionRange（用户发送时的选区行号），则精准替换该行区间，
+     * 保证改动位置 100% 正确；无选区时回退到 JSON 格式统一化对比。
+     */
+    const applyDiffProposal = (
+        code_block: { language: string; code: string },
+        selectionRange?: { startLine: number; endLine: number } | null,
+    ) => {
+        if (!focusedWindow) {
+            message.warning('请先聚焦一个编辑器窗口');
+            return;
+        }
+
+        // 获取当前代码作为 Diff 的原始侧
+        let originalCode = '';
+        if (focusedWindow.activeTab === 'propsJson') {
+            originalCode = editorDrafts[focusedWindow.id] || (
+                focusedWindow.targetKind === 'page'
+                    ? buildPagePropsDraft(page)
+                    : buildPropsDraft(focusedNode)
+            );
+        } else if (focusedWindow.targetKind === 'page') {
+            originalCode = page.scripts[focusedWindow.activeTab as keyof PageScripts] || '';
+        } else {
+            originalCode = focusedNode?.scripts[focusedWindow.activeTab as keyof ComponentScripts] || '';
+        }
+
+        setOpenEditors((prev) =>
+            prev.map((item) => {
+                if (item.id !== focusedWindow.id) return item;
+
+                let proposedCode = code_block.code;
+
+                if (selectionRange) {
+                    // 有选区：精准行区间替换 —— 将原始代码中 [startLine, endLine] 替换为 AI 返回内容
+                    const lines = originalCode.split('\n');
+                    const { startLine, endLine } = selectionRange;
+                    // Monaco 行号从 1 开始，转为 0-based 索引
+                    const before      = lines.slice(0, startLine - 1);
+                    const after       = lines.slice(endLine);          // endLine 已是 1-based，slice 不含
+                    const aiLines     = code_block.code.split('\n');
+                    // 保留首行缩进（与原选区首行对齐）
+                    const indent      = lines[startLine - 1]?.match(/^(\s*)/)?.[1] ?? '';
+                    const indented    = aiLines.map((l, i) => (i === 0 ? indent + l.trimStart() : l));
+                    proposedCode      = [...before, ...indented, ...after].join('\n');
+                } else if (focusedWindow.activeTab === 'propsJson' && code_block.language === 'json') {
+                    // 无选区 + JSON：统一格式化两侧，消除 AI 返回格式差异引起的虚假 diff
+                    try {
+                        const current     = JSON.parse(originalCode);
+                        originalCode      = JSON.stringify(current, null, 2);
+                        const patch       = JSON.parse(code_block.code);
+                        // 判断是否为完整 props（key 数 ≥ current 80%），否则视为补丁递归合并
+                        const isFullProps = Object.keys(patch).length >= Object.keys(current).length * 0.8;
+                        proposedCode      = isFullProps
+                            ? JSON.stringify(patch,                       null, 2)
+                            : JSON.stringify(deepMergePatch(current, patch), null, 2);
+                    } catch {
+                        // 非 JSON 或解析失败，直接使用原始代码块
+                    }
+                }
+
+                return { ...item, diffProposal: { originalCode, proposedCode, language: code_block.language } };
+            }),
+        );
+    };
+
+    /** 接受 AI 的 Diff 建议，将修改后代码写入实际状态 */
+    const acceptDiff = (window_item: EditorWindowState) => {
+        if (!window_item.diffProposal) return;
+        // 读取用户在 modified 侧可能已手动还原部分 hunk 后的当前值
+        const finalCode =
+            diffEditorInstancesRef.current[window_item.id]?.getModifiedEditor?.().getValue?.()
+            ?? window_item.diffProposal.proposedCode;
+
+        if (window_item.activeTab === 'propsJson') {
+            setEditorDrafts((prev) => ({ ...prev, [window_item.id]: finalCode }));
+        } else {
+            updateCurrentScript(
+                window_item.targetKind,
+                window_item.targetId,
+                window_item.activeTab as ScriptEntryKey,
+                finalCode,
+            );
+        }
+        setOpenEditors((prev) =>
+            prev.map((item) =>
+                item.id === window_item.id ? { ...item, diffProposal: null } : item,
+            ),
+        );
+        message.success('已接受 AI 修改');
+    };
+
+    /** 拒绝 AI 的 Diff 建议，退回到普通编辑模式 */
+    const rejectDiff = (window_id: string) => {
+        setOpenEditors((prev) =>
+            prev.map((item) =>
+                item.id === window_id ? { ...item, diffProposal: null } : item,
+            ),
+        );
     };
 
     const updateCurrentScript = (
@@ -1126,10 +1473,41 @@ export default function ConfigPanel({
                                             value: item.key,
                                         })),
                                     ]}
+                                    disabled={!!window_item.diffProposal}
                                 />
                             </div>
                             <div className="floating-tool-window-body floating-tool-window-body-editor">
-                                {window_item.activeTab === 'propsJson' ? (
+                                {window_item.diffProposal ? (
+                                    // Diff 对比模式：左侧原始、右侧 AI 修改（可编辑），点 gutter「←」可逐处还原
+                                    <DiffEditor
+                                        key={`${window_item.id}-diff`}
+                                        height="100%"
+                                        language={window_item.diffProposal.language === 'json' ? 'json' : 'javascript'}
+                                        theme={shared_editor_theme}
+                                        original={window_item.diffProposal.originalCode}
+                                        modified={window_item.diffProposal.proposedCode}
+                                        onMount={(diffEditor) => {
+                                            // 保存实例以便「接受全部」时读取 modified 侧当前值
+                                            diffEditorInstancesRef.current[window_item.id] = diffEditor;
+                                            // diff 计算完成后自动跳到第一处改动
+                                            diffEditor.onDidUpdateDiff(() => {
+                                                const changes = diffEditor.getLineChanges() ?? [];
+                                                if (changes.length > 0) {
+                                                    const first = changes[0];
+                                                    const line  = first.modifiedEndLineNumber > 0
+                                                        ? first.modifiedStartLineNumber
+                                                        : first.originalStartLineNumber;
+                                                    diffEditor.getModifiedEditor().revealLineInCenter(line);
+                                                }
+                                            });
+                                        }}
+                                        options={{
+                                            renderSideBySide: true,
+                                            minimap: { enabled: false },
+                                            fontSize: 13,
+                                        }}
+                                    />
+                                ) : window_item.activeTab === 'propsJson' ? (
                                     <Editor
                                         key={`${window_item.id}-props-json`}
                                         height="100%"
@@ -1137,7 +1515,10 @@ export default function ConfigPanel({
                                         theme={shared_editor_theme}
                                         value={props_draft}
                                         onMount={(editor) => {
+                                            // 记录当前活跃编辑器实例以供获取选中文本
+                                            activeEditorRef.current = editor;
                                             editor.onDidFocusEditorWidget(() => {
+                                                activeEditorRef.current = editor;
                                                 bringEditorToFront(window_item.id);
                                             });
                                         }}
@@ -1157,7 +1538,10 @@ export default function ConfigPanel({
                                         theme={shared_editor_theme}
                                         value={active_script}
                                         onMount={(editor) => {
+                                            // 记录当前活跃编辑器实例以供获取选中文本
+                                            activeEditorRef.current = editor;
                                             editor.onDidFocusEditorWidget(() => {
+                                                activeEditorRef.current = editor;
                                                 bringEditorToFront(window_item.id);
                                             });
                                         }}
@@ -1182,13 +1566,17 @@ export default function ConfigPanel({
                             </div>
                             <div className="floating-tool-window-footer">
                                 <Typography.Text type="secondary">
-                                    当前文件：{
-                                        window_item.activeTab === 'propsJson'
-                                            ? 'props.json'
-                                            : buildEventFileName(String(window_item.activeTab))
+                                    {window_item.diffProposal
+                                        ? 'AI 建议对比 — 左侧为原始代码，右侧为 AI 修改'
+                                        : `当前文件：${window_item.activeTab === 'propsJson' ? 'props.json' : buildEventFileName(String(window_item.activeTab))}`
                                     }
                                 </Typography.Text>
-                                {window_item.activeTab === 'propsJson' ? (
+                                {window_item.diffProposal ? (
+                                    <Space size={8}>
+                                        <Button size="small" onClick={() => rejectDiff(window_item.id)}>关闭对比</Button>
+                                        <Button size="small" type="primary" onClick={() => acceptDiff(window_item)}>接受全部</Button>
+                                    </Space>
+                                ) : window_item.activeTab === 'propsJson' ? (
                                     <Button size="small" type="primary" onClick={() => applyRawProps(window_item)}>
                                         应用 JSON
                                     </Button>
@@ -1215,37 +1603,82 @@ export default function ConfigPanel({
                             <Tag color="gold">置顶</Tag>
                         </div>
                         <div className="floating-tool-window-body floating-tool-window-body-ai">
-                            <Tag color="gold">占位中</Tag>
-                            <Typography.Title level={5}>AI 功能暂未接入</Typography.Title>
-                            <Typography.Paragraph>
-                                {focusedNode && focusedWindow
-                                    ? `当前准备处理 ${focusedNode.name} 的 ${
-                                        focusedWindow.activeTab === 'propsJson'
-                                            ? 'props.json'
-                                            : buildEventFileName(String(focusedWindow.activeTab))
-                                    }。`
-                                    : focusedWindow && focusedWindow.targetKind === 'page'
-                                        ? `当前准备处理页面 ${page.name} 的 ${
-                                            focusedWindow.activeTab === 'propsJson'
-                                                ? 'props.json'
-                                                : buildEventFileName(String(focusedWindow.activeTab))
-                                        }。`
-                                    : '当前还没有聚焦的编辑器，点击任意打开的编辑器后，AI 会跟随该内容。'}
-                            </Typography.Paragraph>
-                            <div className="ai-window-placeholder-list">
-                                <Typography.Paragraph className="protocol-paragraph">
-                                    组件：{focusedNode ? `${focusedNode.title} / ${focusedNode.name}` : '未聚焦'}
-                                </Typography.Paragraph>
-                                <Typography.Paragraph className="protocol-paragraph">
-                                    文件：{focusedWindow
-                                        ? focusedWindow.activeTab === 'propsJson'
-                                            ? 'props.json'
-                                            : buildEventFileName(String(focusedWindow.activeTab))
-                                        : '未聚焦'}
-                                </Typography.Paragraph>
-                                <Typography.Paragraph className="protocol-paragraph">
-                                    后续这里会基于当前聚焦编辑器做问答、生成、比对和局部采纳。
-                                </Typography.Paragraph>
+                            {/* AI 对话历史 */}
+                            <div className="ai-assistant-history" ref={aiHistoryRef} style={{ flex: 1, minHeight: 0 }}>
+                                {aiHistory.map((entry) => (
+                                    <div
+                                        key={entry.id}
+                                        className={
+                                            entry.role === 'user'
+                                                ? 'ai-msg ai-msg-user'
+                                                : 'ai-msg ai-msg-assistant'
+                                        }
+                                    >
+                                        <div className="ai-msg-header">
+                                            <span className="ai-msg-role">
+                                                {entry.role === 'user' ? '你' : 'AI'}
+                                            </span>
+                                            <button
+                                                className="ai-msg-copy"
+                                                title="复制"
+                                                onClick={() =>
+                                                    void navigator.clipboard.writeText(entry.content)
+                                                }
+                                            >
+                                                <CopyOutlined />
+                                            </button>
+                                        </div>
+                                        <span className="ai-msg-content">{entry.label ?? entry.content}</span>
+                                        {/* user 消息附带的上下文简短描述 */}
+                                        {entry.role === 'user' && entry.contextHint ? (
+                                            <span style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                                                {entry.contextHint}
+                                            </span>
+                                        ) : null}
+
+                                    </div>
+                                ))}
+                                {aiLoading && (
+                                    <div className="ai-msg ai-msg-assistant">
+                                        <span className="ai-msg-role">AI</span>
+                                        <span className="ai-msg-content ai-msg-thinking">思考中…</span>
+                                    </div>
+                                )}
+                            </div>
+                            {/* 当前聚焦文件提示 */}
+                            {focusedWindow && (
+                                <div style={{ padding: '4px 8px', fontSize: 11, color: '#64748b', flexShrink: 0 }}>
+                                    上下文：
+                                    {focusedNode
+                                        ? `${focusedNode.name}（${focusedNode.type}）`
+                                        : `页面 ${page.name}`}
+                                    {' / '}
+                                    {focusedWindow.activeTab === 'propsJson'
+                                        ? 'props.json'
+                                        : buildEventFileName(String(focusedWindow.activeTab))}
+                                </div>
+                            )}
+                            {/* 输入区域 */}
+                            <div className="ai-assistant-footer" style={{ flexShrink: 0 }}>
+                                <Input.TextArea
+                                    value={aiPrompt}
+                                    disabled={aiLoading}
+                                    autoSize={{ minRows: 2, maxRows: 4 }}
+                                    placeholder="描述你想实现的脚本功能…"
+                                    onChange={(e) => setAiPrompt(e.target.value)}
+                                    onPressEnter={(e) => {
+                                        if (e.shiftKey) return;
+                                        e.preventDefault();
+                                        void executeCodePrompt(aiPrompt);
+                                    }}
+                                />
+                                <Button
+                                    type="primary"
+                                    size="small"
+                                    icon={<SendOutlined />}
+                                    loading={aiLoading}
+                                    onClick={() => void executeCodePrompt(aiPrompt)}
+                                />
                             </div>
                         </div>
                     </div>
