@@ -27,10 +27,28 @@ export const textProtocol: ComponentProtocolDefinition = {
   ],
   supportedMethods: [
     {
-      name: 'Ctx.message.success',
+      name: 'message.success',
       summary: '在脚本中输出成功提示。',
-      signature: 'Ctx.message.success(content: string)',
-      example: "Ctx.message.success('标题已刷新');",
+      signature: 'message.success(content: string)',
+      example: "message.success('标题已刷新');",
+    },
+    {
+      name: 'Realtime.subscribeTag',
+      summary: '运行态由组件内部使用，用于订阅后端实时变量。',
+      signature: 'binding.enabled = true; binding.tagName = "temperature"',
+      example: 'binding: { enabled: true, tagName: "temperature", template: "{value} {unit}" }',
+    },
+    {
+      name: 'Realtime.writeTag',
+      summary: '运行态点击文本弹窗确认后，向后端预留回写入口写入变量。',
+      signature: 'writeBack.enabled = true; writeBack.tagName = "setpoint"',
+      example: 'writeBack: { enabled: true, tagName: "setpoint", valueType: "number" }',
+    },
+    {
+      name: 'PageRuntime variable binding',
+      summary: '文本可绑定页面局部变量，变量对象包含 value、previousValue、quality、valueTs 和扩展字段。',
+      signature: 'binding.source = "page"; binding.variableName = "page.温度"',
+      example: 'binding: { enabled: true, source: "page", variableName: "page.温度", template: "{value} {unit}" }',
     },
   ],
   properties: [
@@ -90,9 +108,29 @@ export const textProtocol: ComponentProtocolDefinition = {
       usage: '标题和正文应有明显层次。',
       example: '28',
     },
+    {
+      name: 'binding',
+      type: 'object',
+      required: false,
+      summary: '实时变量绑定配置。',
+      usage: '开启后文本显示实时变量值，而不是静态 text。',
+      example: '{ "enabled": true, "tagName": "temperature", "template": "{value} {unit}" }',
+    },
+    {
+      name: 'writeBack',
+      type: 'object',
+      required: false,
+      summary: '点击文本回写配置。',
+      usage: '开启后预览运行态点击文本弹窗输入回写值。',
+      example: '{ "enabled": true, "tagName": "setpoint", "valueType": "number" }',
+    },
   ],
   aiHints: [
     'AI 生成 text 时，应优先生成业务语义化标题，而不是“新的文本组件”。',
     '当文本用作状态标签时，建议同时生成颜色字段。',
+    '需要显示后端实时数据时，使用 binding 配置，不要生成轮询脚本。',
+    '需要点击文本写入设定值时，使用 writeBack 配置，回写由统一实时服务处理。',
+    '文本脚本直接使用 vars、components、message 和 change，不要生成 Ctx.xxx。',
+    '需要读写页面局部变量时，binding/writeBack 设置 source: "page" 并使用 variableName，例如 page.温度；中文变量名必须作为字符串保存。',
   ],
 };

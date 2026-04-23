@@ -3,7 +3,7 @@
  * 只保留对话 UI + 多轮 AI 调用，去掉本地规则引擎，支持拖动。
  */
 import { CloseOutlined, CopyOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons';
-import { Button, Input, Space, Typography } from 'antd';
+import { Button, Input, Space, Typography, message } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   flattenNodes,
@@ -13,6 +13,8 @@ import {
   type PageSchema,
 } from '../../schema/pageSchema';
 import { callAiChat, type AiAction } from '../../services/aiService';
+
+const AI_LAYOUT_DEBUG_PREFIX = '[AiLayoutAssistant]';
 
 interface ChatEntry {
   id: string;
@@ -37,6 +39,7 @@ interface AiLayoutAssistantProps {
   onUpdatePageSettings: (patch: Record<string, unknown>) => void;
   onUpdateNodeProps: (nodeId: string, patch: Record<string, unknown>) => void;
   onUpdateNodeTitle: (nodeId: string, title: string) => void;
+  onAfterActionsApplied?: () => Promise<void> | void;
 }
 
 function createEntry(role: 'user' | 'assistant', content: string): ChatEntry {
@@ -57,6 +60,7 @@ export default function AiLayoutAssistant({
   onUpdatePageSettings,
   onUpdateNodeProps,
   onUpdateNodeTitle,
+  onAfterActionsApplied,
 }: AiLayoutAssistantProps) {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
@@ -75,6 +79,11 @@ export default function AiLayoutAssistant({
   }>({ active: false, startX: 0, startY: 0, originX: 0, originY: 0 });
 
   const historyRef = useRef<HTMLDivElement>(null);
+
+  const existingNodes = useMemo(
+    () => flattenNodes(page.root).filter((n) => n.id !== page.root.id),
+    [page.root],
+  );
 
   // 当前组件列表（只传 id/type/title，按需构建，不含完整属性）
   const nodes = useMemo(
@@ -127,25 +136,119 @@ export default function AiLayoutAssistant({
 
   /** 将 LLM 返回的动作列表应用到画布 */
   const applyAiActions = (actions: AiAction[]) => {
-    if (!Array.isArray(actions)) return;
+    if (!Array.isArray(actions)) return 0;
+    let appliedCount = 0;
+    const actionLogs: Array<Record<string, unknown>> = [];
     for (const action of actions) {
       if (action.type === 'update_page' && action.patch) {
         onUpdatePageSettings(action.patch);
+        appliedCount += 1;
+        actionLogs.push({
+          type: action.type,
+          target: 'page',
+          result: 'applied',
+          patchKeys: Object.keys(action.patch).join(','),
+        });
       } else if (action.type === 'add_node' && action.nodeType) {
+        const matchedNode = action.title
+          ? existingNodes.find((node) => node.title === action.title && node.type === action.nodeType)
+          : undefined;
+
+        if (matchedNode) {
+          const patch = {
+            ...(action.position ? { x: action.position.x, y: action.position.y } : {}),
+            ...(action.props || {}),
+          };
+
+          if (Object.keys(patch).length > 0) {
+            onUpdateNodeProps(matchedNode.id, patch);
+            appliedCount += 1;
+          }
+          if (action.title && action.title !== matchedNode.title) {
+            onUpdateNodeTitle(matchedNode.id, action.title);
+          }
+          onRevealNode(matchedNode.id);
+          actionLogs.push({
+            type: action.type,
+            target: matchedNode.id,
+            result: 'reused-existing-node',
+            title: matchedNode.title,
+            patchKeys: Object.keys(patch).join(','),
+          });
+          continue;
+        }
+
         const id = onAddNode(
           action.nodeType as ComponentType,
           action.position as CanvasPosition | undefined,
           { title: action.title, props: action.props },
         );
-        if (id) onRevealNode(id);
+        if (id) {
+          appliedCount += 1;
+          onRevealNode(id);
+          actionLogs.push({
+            type: action.type,
+            target: id,
+            result: 'added',
+            title: action.title || '',
+            patchKeys: action.props ? Object.keys(action.props).join(',') : '',
+          });
+        } else {
+          actionLogs.push({
+            type: action.type,
+            target: action.title || action.nodeType,
+            result: 'ignored',
+            reason: 'onAddNode-return-null',
+          });
+        }
       } else if (action.type === 'update_node' && action.nodeId) {
+        const matchedNode = existingNodes.find((node) => node.id === action.nodeId);
+        if (!matchedNode) {
+          actionLogs.push({
+            type: action.type,
+            target: action.nodeId,
+            result: 'missed',
+            reason: 'node-not-found',
+          });
+          continue;
+        }
+
         if (action.patch) onUpdateNodeProps(action.nodeId, action.patch);
         if (action.title) onUpdateNodeTitle(action.nodeId, action.title);
         onRevealNode(action.nodeId);
+        appliedCount += 1;
+        actionLogs.push({
+          type: action.type,
+          target: action.nodeId,
+          result: 'applied',
+          title: matchedNode.title,
+          patchKeys: action.patch ? Object.keys(action.patch).join(',') : '',
+        });
       } else if (action.type === 'select_node' && action.nodeId) {
         onRevealNode(action.nodeId);
+        appliedCount += 1;
+        actionLogs.push({
+          type: action.type,
+          target: action.nodeId,
+          result: 'applied',
+        });
+      } else {
+        actionLogs.push({
+          type: action.type,
+          target: action.nodeId || action.title || action.nodeType || 'unknown',
+          result: 'ignored',
+          reason: 'action-invalid-or-missing-fields',
+        });
       }
     }
+
+    console.groupCollapsed(`${AI_LAYOUT_DEBUG_PREFIX} 前端应用 AI 动作`);
+    console.info('总动作数', actions.length);
+    console.info('成功应用数', appliedCount);
+    console.table(actionLogs);
+    console.groupEnd();
+
+    return appliedCount;
   };
 
   /** 发送消息给 AI，并将结果应用到画布 */
@@ -166,6 +269,18 @@ export default function AiLayoutAssistant({
     setPrompt('');
     setLoading(true);
 
+    console.groupCollapsed(`${AI_LAYOUT_DEBUG_PREFIX} 准备执行整页排版`);
+    console.info('pageId', page.id);
+    console.info('pageName', page.name);
+    console.info('组件总数', nodes.length);
+    console.info('用户输入', text);
+    console.info('当前选中组件', selectedNode ? {
+      id: selectedNode.id,
+      type: selectedNode.type,
+      title: selectedNode.title,
+    } : null);
+    console.groupEnd();
+
     // assistant 消息重新包装为 JSON 格式，强化 LLM 遵循格式约定，避免多轮后退化为纯文本回复
     const messages = nextHistory.map((e) => {
       if (e.role === 'assistant') {
@@ -176,10 +291,19 @@ export default function AiLayoutAssistant({
 
     try {
       const result = await callAiChat(messages, nodes);
-      applyAiActions(Array.isArray(result.actions) ? result.actions : []);
+      const appliedCount = applyAiActions(Array.isArray(result.actions) ? result.actions : []);
+      if (appliedCount > 0) {
+        await onAfterActionsApplied?.();
+        message.success(`AI 编排已应用 ${appliedCount} 个动作`);
+      }
+      console.info(`${AI_LAYOUT_DEBUG_PREFIX} 本次编排完成`, {
+        appliedCount,
+        actionCount: Array.isArray(result.actions) ? result.actions.length : 0,
+      });
       setHistory((prev) => [...prev, createEntry('assistant', result.reply || '已完成操作')]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.error(`${AI_LAYOUT_DEBUG_PREFIX} 前端执行 AI 编排失败`, err);
       setHistory((prev) => [...prev, createEntry('assistant', `AI 调用失败：${msg}`)]);
     } finally {
       setLoading(false);

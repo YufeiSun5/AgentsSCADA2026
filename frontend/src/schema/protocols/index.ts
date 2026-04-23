@@ -4,7 +4,8 @@ import {
   buttonProtocol,
   chartProtocol,
   containerProtocol,
-  inputProtocol,
+  customHtmlProtocol,
+  imageProtocol,
   tableProtocol,
   textProtocol,
 } from './components';
@@ -20,9 +21,10 @@ export const componentProtocols: Record<
   container: containerProtocol,
   text: textProtocol,
   button: buttonProtocol,
-  input: inputProtocol,
   table: tableProtocol,
   chart: chartProtocol,
+  customHtml: customHtmlProtocol,
+  image: imageProtocol,
 };
 
 export function getComponentProtocol(type: ComponentType) {

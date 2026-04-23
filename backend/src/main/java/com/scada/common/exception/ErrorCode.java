@@ -37,7 +37,13 @@ public enum ErrorCode {
     // ===== AI 服务 =====
     AI_PROVIDER_DISABLED(4001, "AI 服务不可用"),
     AI_RATE_LIMITED     (4002, "AI 服务繁忙，请稍后再试"),
-    AI_UPSTREAM_ERROR   (4003, "上游 AI 接口调用失败");
+    AI_UPSTREAM_ERROR   (4003, "上游 AI 接口调用失败"),
+
+    // ===== 资产管理 =====
+    ASSET_NOT_FOUND     (5001, "资产文件不存在"),
+    ASSET_TYPE_DENIED   (5002, "不允许的文件类型"),
+    ASSET_TOO_LARGE     (5003, "文件大小超出限制"),
+    ASSET_STORAGE_ERROR (5004, "文件存储失败");
 
     private final int    code;
     private final String msg;

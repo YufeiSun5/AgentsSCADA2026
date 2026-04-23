@@ -27,7 +27,7 @@ interface PageSchema {
 ```typescript
 interface ComponentNode {
     id: string;
-    type: ComponentType;         // 'container' | 'text' | 'button' | 'input' | 'table' | 'chart'
+    type: ComponentType;         // 'container' | 'text' | 'button' | 'input' | 'table' | 'chart' | 'customHtml'
     name: string;
     title: string;
     props: Record<string, unknown>;
@@ -94,8 +94,17 @@ const componentProtocols: Record<ComponentType, ComponentProtocolDefinition>
 | `input` | 输入框 | 基础组件 |
 | `table` | 表格 | 数据展示 |
 | `chart` | 图表 | 数据展示 |
+| `customHtml` | 自定义HTML | 高级组件 |
 
 `createComponentNode(type)` 根据 catalog 创建带默认属性的新节点。
+
+## customHtml 组件特殊规则
+
+- `customHtml` 使用 iframe srcdoc 渲染用户 HTML/CSS/JS，与画布主页面严格隔离
+- 协议文件中的 `supportedMethods` 描述 **ScadaBridge SDK** 方法（readTag/writeTag/subscribe/query/assetUrl），不使用常规组件的 Ctx 方法
+- `aiHints` 必须包含 ScadaBridge API 用法说明，告知 AI 在 `ScadaBridge.onReady()` 回调中编写初始化逻辑
+- 默认属性：`htmlContent`、`cssContent`、`jsContent`、`transparent`、`libraryAssetIds`、`sandboxPermissions`
+- `libraryAssetIds` 关联后端 `sys_assets` 表中的 JS/CSS 文件，渲染时自动注入 `<script>` / `<link>` 标签
 
 ## 兼容层
 

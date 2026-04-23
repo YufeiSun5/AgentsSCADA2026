@@ -30,7 +30,7 @@ export default function ContainerMaterial({
         ...style,
         background: String(node.props.background || '#ffffff'),
         padding: Number(node.props.padding || 16),
-        borderRadius: Number(node.props.borderRadius || 16),
+        borderRadius: Number(node.props.borderRadius || 6),
         minHeight: Number(node.props.minHeight || 120),
         border: '1px solid rgba(15, 23, 42, 0.08)',
         overflow: 'hidden',

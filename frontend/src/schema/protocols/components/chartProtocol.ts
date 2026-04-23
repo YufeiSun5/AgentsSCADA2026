@@ -27,10 +27,10 @@ export const chartProtocol: ComponentProtocolDefinition = {
   ],
   supportedMethods: [
     {
-      name: 'Ctx.message.info',
+      name: 'message.info',
       summary: '提示图表初始化或数据刷新状态。',
-      signature: 'Ctx.message.info(content: string)',
-      example: "Ctx.message.info('趋势图已完成刷新');",
+      signature: 'message.info(content: string)',
+      example: "message.info('趋势图已完成刷新');",
     },
   ],
   properties: [

@@ -85,8 +85,9 @@
 | 1 | `MEMORY.md` | 当前开发阶段、已完成事项、后续计划 |
 | 2 | `.ai/instructions/coding-style.md` | 编码风格规范（缩进、大括号、命名、函数、注释） |
 | 3 | `.ai/instructions/frontend-react.md` | React 组件与状态管理约定 |
-| 4 | `.ai/instructions/schema-protocol.md` | JSON Schema 与协议层规范 |
-| 5 | `.ai/docs/后端文档.md` | 后端完整技术设计（系统表、模块架构、协议适配、AI 中心等）|
+| 4 | `.ai/instructions/ui-design.md` | UI 设计规范（GitHub Primer 风格、色彩、间距、圆角、阴影） |
+| 5 | `.ai/instructions/schema-protocol.md` | JSON Schema 与协议层规范 |
+| 6 | `.ai/docs/后端文档.md` | 后端完整技术设计（系统表、模块架构、协议适配、AI 中心等）|
 
 ## 按需资源
 

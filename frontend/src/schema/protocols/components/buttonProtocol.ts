@@ -5,8 +5,9 @@ export const buttonProtocol: ComponentProtocolDefinition = {
   title: '按钮组件',
   summary: '用于刷新、确认、联动跳转、控制命令等用户操作入口。',
   usage: [
-    '按钮应绑定 onClick 脚本，避免成为纯展示元素。',
+    '按钮可绑定 onClick 脚本，也可通过 writeBack 配置直接下发控制指令。',
     '操作型按钮文案应直接表达动作，例如“刷新状态”“确认联动”。',
+    '涉及设备控制时建议开启 confirmRequired，防止误操作。',
   ],
   supportedEvents: [
     {
@@ -33,16 +34,28 @@ export const buttonProtocol: ComponentProtocolDefinition = {
   ],
   supportedMethods: [
     {
-      name: 'Ctx.message.success',
+      name: 'message.success',
       summary: '提示按钮动作成功。',
-      signature: 'Ctx.message.success(content: string)',
-      example: "Ctx.message.success('已触发设备复位');",
+      signature: 'message.success(content: string)',
+      example: "message.success('已触发设备复位');",
     },
     {
-      name: 'Ctx.message.error',
+      name: 'message.error',
       summary: '提示按钮动作失败。',
-      signature: 'Ctx.message.error(content: string)',
-      example: "Ctx.message.error('设备离线，无法执行操作');",
+      signature: 'message.error(content: string)',
+      example: "message.error('设备离线，无法执行操作');",
+    },
+    {
+      name: 'Realtime.writeTag',
+      summary: '运行态由组件内部使用，点击后向后端预留回写入口下发变量值。',
+      signature: 'writeBack.enabled = true; writeBack.tagName = "pump_run"',
+      example: 'writeBack: { enabled: true, tagName: "pump_run", value: 1, confirmRequired: true }',
+    },
+    {
+      name: 'PageRuntime.writeVar',
+      summary: '按钮可直接写入当前页面局部变量，不走后端点位。',
+      signature: 'writeBack.enabled = true; writeBack.source = "page"; writeBack.variableName = "page.页面模式"',
+      example: 'writeBack: { enabled: true, source: "page", variableName: "page.页面模式", value: "manual" }',
     },
   ],
   properties: [
@@ -94,9 +107,20 @@ export const buttonProtocol: ComponentProtocolDefinition = {
       usage: '常用值为 primary、default、dashed。',
       example: 'primary',
     },
+    {
+      name: 'writeBack',
+      type: 'object',
+      required: false,
+      summary: '按钮回写配置。',
+      usage: '开启后点击按钮直接调用统一实时服务 writeTag。',
+      example: '{ "enabled": true, "tagName": "pump_run", "value": 1, "confirmRequired": true }',
+    },
   ],
   aiHints: [
-    'AI 为按钮生成脚本时，应限制在 Ctx 上下文与 message 方法内。',
-    '命令型按钮应同时生成失败提示脚本。',
+    '命令型按钮优先使用 writeBack 配置，不要在 onClick 中重复手写 WebSocket 逻辑。',
+    '涉及启停、复位、阀门开关时，confirmRequired 应为 true。',
+    '只改变当前页面逻辑状态时，writeBack 使用 source: "page" 和 variableName，避免误写后端系统点位。',
+    '按钮脚本直接使用 vars 和 message；vars.set 默认自动补脚本来源，reason 可按需再写。',
+    '页面局部变量名允许中文，例如 page.页面模式；变量名作为字符串保存，不要生成 JS 点访问表达式。',
   ],
 };

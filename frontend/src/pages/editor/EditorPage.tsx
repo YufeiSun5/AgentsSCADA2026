@@ -12,6 +12,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { Empty, Spin, message } from 'antd';
+import { LeftOutlined, RightOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import AiLayoutAssistant from '../../components/editor/AiLayoutAssistant';
@@ -33,10 +34,27 @@ export default function EditorPage() {
   const { pageId = 'demo' } = useParams();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [loading, setLoading] = useState(true);
-  const [aiAssistantVisible, setAiAssistantVisible] = useState(true);
+  const [aiAssistantVisible, setAiAssistantVisible] = useState(false);
   const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const lastDragDeltaRef = useRef({ x: 0, y: 0 });
+
+  // 左右面板折叠状态
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+  // 折叠后浮动按钮的屏幕位置
+  const [leftBtnPos, setLeftBtnPos] = useState({ x: 8, y: 220 });
+  const [rightBtnPos, setRightBtnPos] = useState(() => ({ x: window.innerWidth - 44, y: 220 }));
+  // 浮动按钮拖拽 ref
+  const collapseTabDragRef = useRef<{
+    side: 'left' | 'right';
+    startClientX: number;
+    startClientY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+  } | null>(null);
+  const collapseTabMovedRef = useRef(false);
   const {
     schema,
     selectedId,
@@ -95,6 +113,30 @@ export default function EditorPage() {
     }
     return findNodeById(schema.root, selectedId);
   }, [schema, selectedId]);
+
+  // 面板收起按钮的拖拽监听
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const drag = collapseTabDragRef.current;
+      if (!drag) return;
+      const dx = e.clientX - drag.startClientX;
+      const dy = e.clientY - drag.startClientY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+      const newPos = { x: drag.originX + dx, y: drag.originY + dy };
+      if (drag.side === 'left') setLeftBtnPos(newPos);
+      else setRightBtnPos(newPos);
+    };
+    const onUp = () => {
+      collapseTabMovedRef.current = collapseTabDragRef.current?.moved ?? false;
+      collapseTabDragRef.current = null;
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   if (loading) {
     return <Spin size="large" />;
@@ -214,6 +256,29 @@ export default function EditorPage() {
     handleDragEnd(event);
   };
 
+  // 启动浮动按钮拖拽
+  const startCollapseTabDrag = (e: React.MouseEvent, side: 'left' | 'right') => {
+    const pos = side === 'left' ? leftBtnPos : rightBtnPos;
+    collapseTabDragRef.current = {
+      side,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      originX: pos.x,
+      originY: pos.y,
+      moved: false,
+    };
+  };
+
+  // 点击浮动按钮展开面板（若为拖拽操作则忽略点击）
+  const handleCollapseTabClick = (side: 'left' | 'right') => {
+    if (collapseTabMovedRef.current) {
+      collapseTabMovedRef.current = false;
+      return;
+    }
+    if (side === 'left') setLeftCollapsed(false);
+    else setRightCollapsed(false);
+  };
+
   return (
     <div className="editor-page">
       <EditorToolbar
@@ -224,10 +289,10 @@ export default function EditorPage() {
         onUndo={undo}
         onRedo={redo}
         onToggleAiAssistant={() => setAiAssistantVisible((previous) => !previous)}
-        onPreview={() => navigate(`/preview/${schema.id}`)}
+        onPreview={() => window.open(`/preview/${schema.id}`, '_blank')}
         onSave={async () => {
           const saved = await savePage(schema);
-          setSchema(saved);
+          setSchema(saved, { preserveSelection: true });
           message.success('页面 JSON Schema 已保存');
         }}
       />
@@ -239,9 +304,11 @@ export default function EditorPage() {
         onDragCancel={handleDragCancel}
       >
         <div className="editor-workspace">
+          {!leftCollapsed && (
           <aside className="editor-side-left">
-            <MaterialPalette />
+            <MaterialPalette onCollapse={() => setLeftCollapsed(true)} />
           </aside>
+          )}
           <main className="editor-main">
             <CanvasArea
               page={schema}
@@ -276,6 +343,7 @@ export default function EditorPage() {
               }}
             />
           </main>
+          {!rightCollapsed && (
           <aside className="editor-side-right">
             <ConfigPanel
               page={schema}
@@ -297,10 +365,37 @@ export default function EditorPage() {
               onPageVariablesChange={updatePageVariables}
               onPageScriptsChange={updatePageScripts}
               onPageSettingsChange={updatePageSettings}
+              onCollapse={() => setRightCollapsed(true)}
             />
           </aside>
+          )}
         </div>
       </DndContext>
+
+      {/* 面板收起后的浮动展开按钮，支持自由拖动位置 */}
+      {leftCollapsed && (
+        <button
+          className="panel-float-btn"
+          style={{ left: leftBtnPos.x, top: leftBtnPos.y }}
+          onMouseDown={(e) => startCollapseTabDrag(e, 'left')}
+          onClick={() => handleCollapseTabClick('left')}
+          title="展开物料面板"
+        >
+          <RightOutlined />
+        </button>
+      )}
+      {rightCollapsed && (
+        <button
+          className="panel-float-btn"
+          style={{ left: rightBtnPos.x, top: rightBtnPos.y }}
+          onMouseDown={(e) => startCollapseTabDrag(e, 'right')}
+          onClick={() => handleCollapseTabClick('right')}
+          title="展开配置面板"
+        >
+          <LeftOutlined />
+        </button>
+      )}
+
       <AiLayoutAssistant
         page={schema}
         selectedNode={selectedNode}
@@ -311,6 +406,23 @@ export default function EditorPage() {
         onUpdatePageSettings={updatePageSettings}
         onUpdateNodeProps={updateNodeProps}
         onUpdateNodeTitle={updateNodeTitle}
+        onAfterActionsApplied={async () => {
+          const latestSchema = useEditorStore.getState().schema;
+          if (!latestSchema) {
+            return;
+          }
+
+          const saved = await savePage(latestSchema);
+          console.info('[AiLayoutAssistant] AI 动作应用后已自动保存页面', {
+            pageId: saved.id,
+            pageName: saved.name,
+            updatedAt: saved.updatedAt,
+            canvasWidth: saved.root.props.canvasWidth,
+            canvasHeight: saved.root.props.canvasHeight,
+            nodeCount: saved.root.children.length,
+          });
+          setSchema(saved, { preserveSelection: true });
+        }}
       />
     </div>
   );

@@ -1,0 +1,4 @@
+[tools]
+java = "21.0.8+9-zulu"
+maven = "3.9.14"
+nodejs = "25.6.0"

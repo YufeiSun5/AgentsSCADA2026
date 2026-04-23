@@ -2,7 +2,7 @@
  * 画布交互模块。
  * 负责组件选中、拖拽、右键菜单和双击打开代码编辑器。
  */
-import { Card, Dropdown, Empty, Typography } from 'antd';
+import { Dropdown, Empty, Typography } from 'antd';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import type { MenuProps } from 'antd';
 import type { MouseEvent } from 'react';
@@ -69,7 +69,7 @@ function CanvasNodeItem({
         onClick: ({ key }) => onContextAction(node.id, key as 'front' | 'back' | 'forward' | 'backward' | 'delete'),
       }}
     >
-      <Card
+      <div
         ref={setNodeRef}
         className={selected ? 'canvas-node canvas-node-selected' : 'canvas-node'}
         {...dragBinding}
@@ -93,15 +93,9 @@ function CanvasNodeItem({
           event.stopPropagation();
           onSelect(node.id);
         }}
-        title={
-          <div className="canvas-node-title">
-            <span>{node.title}</span>
-            <Typography.Text type="secondary">{node.type}</Typography.Text>
-          </div>
-        }
       >
         <SchemaRenderer page={page} node={node} />
-      </Card>
+      </div>
     </Dropdown>
   );
 }
@@ -128,7 +122,7 @@ export default function CanvasArea({
   const canvasHeight = Number(page.root.props.canvasHeight || 900);
   const canvasBackground = String(page.root.props.background || '#081622');
   const gridSize = Number(page.root.props.gridSize || 20);
-  const borderRadius = Number(page.root.props.borderRadius || 24);
+  const borderRadius = Number(page.root.props.borderRadius || 6);
 
   const bindCanvasRef = (element: HTMLDivElement | null) => {
     setNodeRef(element);
@@ -149,7 +143,8 @@ export default function CanvasArea({
             style={{
               width: canvasWidth,
               height: canvasHeight,
-              background: canvasBackground,
+              backgroundColor: canvasBackground,
+              backgroundImage: 'linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px)',
               borderRadius,
               backgroundSize: `${gridSize}px ${gridSize}px`,
             }}

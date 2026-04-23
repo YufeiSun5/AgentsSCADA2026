@@ -80,7 +80,7 @@ export const pageCanvasProtocol: PageProtocolDefinition = {
     {
       key: 'onVariableChange',
       label: '页面变量改变时',
-      summary: '页面级变量发生变化后执行。',
+      summary: '页面级变量发生变化后执行，用于全局汇总和跨变量编排。',
       scope: 'page',
       sharedWithAi: true,
     },
@@ -89,5 +89,11 @@ export const pageCanvasProtocol: PageProtocolDefinition = {
     'AI 生成页面时，先确定 canvasWidth、canvasHeight，再为每个组件生成 x、y、width、height。',
     'AI 生成布局时，优先按 8、10、16、20 的工业网格倍数落点。',
     'AI 输出脚本时，需参考组件支持事件和方法，不要凭空生成不存在的行为。',
+    '页面脚本直接使用全局对象 vars、components、message、change、page、node，不要生成 Ctx.xxx。',
+    '页面局部变量通过 vars 访问；vars.get(name) 返回完整 RuntimeVariable，vars.getValue(name) 返回当前值。',
+    '变量名允许中文；访问中文变量必须使用字符串 API，例如 vars.getValue("page.温度")，不要生成 vars.page.温度。',
+    '优先把单变量逻辑写在变量自己的 scripts.onChange 中，页面 onVariableChange 只保留全局汇总、分发和跨变量编排。',
+    '页面变量变化脚本直接使用 change 获取本次变更，变量对象包含 value、previousValue、valueTs、previousValueTs、quality、扩展字段。',
+    '脚本调用其他组件方法使用 components.call(componentIdOrName, methodName, ...args)。',
   ],
 };

@@ -1,8 +1,12 @@
 export type PageStatus = 'draft' | 'enabled' | 'disabled';
 
-export type ComponentType = 'container' | 'text' | 'button' | 'input' | 'table' | 'chart';
+export type ComponentType = 'container' | 'text' | 'button' | 'table' | 'chart' | 'customHtml' | 'image';
 
 export type ComponentVariableType = 'string' | 'number' | 'boolean' | 'json';
+
+export interface VariableScripts {
+  onChange?: string;
+}
 
 export interface ComponentVariable {
   id: string;
@@ -10,6 +14,27 @@ export interface ComponentVariable {
   type: ComponentVariableType;
   initialValue: string;
   summary: string;
+  displayName?: string;
+  dataType?: string;
+  rwMode?: 'R' | 'W' | 'RW' | string;
+  unit?: string;
+  format?: string;
+  precision?: number;
+  color?: string;
+  icon?: string;
+  identityExtra?: Record<string, unknown>;
+  ownerExtra?: Record<string, unknown>;
+  typeExtra?: Record<string, unknown>;
+  valueExtra?: Record<string, unknown>;
+  timeExtra?: Record<string, unknown>;
+  qualityExtra?: Record<string, unknown>;
+  changeExtra?: Record<string, unknown>;
+  alarmExtra?: Record<string, unknown>;
+  writeExtra?: Record<string, unknown>;
+  displayExtra?: Record<string, unknown>;
+  configExtra?: Record<string, unknown>;
+  customExtra?: Record<string, unknown>;
+  scripts?: VariableScripts;
 }
 
 export interface ComponentScripts {
@@ -68,9 +93,10 @@ export interface PagedResult<T> {
 export interface MaterialDefinition {
   type: ComponentType;
   label: string;
-  category: '基础组件' | '数据展示' | '布局容器';
+  category: '基础组件' | '数据展示' | '布局容器' | '高级组件';
   description: string;
   defaultProps: Record<string, unknown>;
+  visible?: boolean;
 }
 
 function createId(prefix: string) {
@@ -83,6 +109,7 @@ export const materialCatalog: MaterialDefinition[] = [
     label: '容器',
     category: '布局容器',
     description: '用于包裹嵌套组件与定义区块视觉风格。',
+    visible: false,
     defaultProps: {
       x: 80,
       y: 80,
@@ -91,7 +118,7 @@ export const materialCatalog: MaterialDefinition[] = [
       zIndex: 1,
       background: '#16324a',
       padding: 16,
-      borderRadius: 16,
+      borderRadius: 6,
       minHeight: 120,
     },
   },
@@ -109,6 +136,20 @@ export const materialCatalog: MaterialDefinition[] = [
       text: '新的文本组件',
       color: '#e2e8f0',
       fontSize: 24,
+      binding: {
+        enabled: false,
+        tagName: 'temperature',
+        template: '{value} {unit}',
+        precision: 1,
+        fallback: '--',
+      },
+      writeBack: {
+        enabled: false,
+        tagName: 'setpoint',
+        valueType: 'number',
+        title: '写入变量值',
+        placeholder: '请输入回写值',
+      },
     },
   },
   {
@@ -124,20 +165,16 @@ export const materialCatalog: MaterialDefinition[] = [
       zIndex: 2,
       text: '执行操作',
       buttonType: 'primary',
-    },
-  },
-  {
-    type: 'input',
-    label: '输入框',
-    category: '基础组件',
-    description: '用于表单采集或筛选条件输入。',
-    defaultProps: {
-      x: 80,
-      y: 80,
-      width: 260,
-      height: 40,
-      zIndex: 2,
-      placeholder: '请输入内容',
+      writeBack: {
+        enabled: false,
+        tagName: 'pump_run',
+        value: 1,
+        action: 'set',
+        confirmRequired: true,
+        confirmTitle: '确认下发控制指令？',
+        successMessage: '控制指令已下发',
+        errorMessage: '控制指令下发失败',
+      },
     },
   },
   {
@@ -148,16 +185,33 @@ export const materialCatalog: MaterialDefinition[] = [
     defaultProps: {
       x: 80,
       y: 80,
-      width: 540,
-      height: 260,
+      width: 680,
+      height: 320,
       zIndex: 1,
-      columns: [
-        { title: '点位', dataIndex: 'tag' },
-        { title: '值', dataIndex: 'value' },
+      gridEngine: 'ag-grid',
+      pagination: {
+        enabled: true,
+        pageSize: 20,
+        pageSizeOptions: [10, 20, 50, 100],
+      },
+      rowSelection: 'single',
+      theme: {
+        compact: true,
+        striped: true,
+        oddRowBackground: '#f6f8fa',
+        evenRowBackground: '#ffffff',
+        hoverRowBackground: '#eef6ff',
+      },
+      columnDefs: [
+        { field: 'tag', headerName: '点位', width: 150, cellType: 'tag' },
+        { field: 'value', headerName: '值', width: 120, editable: true, cellType: 'input' },
+        { field: 'status', headerName: '状态', width: 100, cellType: 'switch' },
+        { field: 'progress', headerName: '进度', width: 150, cellType: 'progress' },
+        { field: 'action', headerName: '操作', width: 120, cellType: 'button', buttonText: '写入' },
       ],
-      dataSource: [
-        { key: '1', tag: 'A-101', value: '48.1' },
-        { key: '2', tag: 'A-102', value: '49.7' },
+      rowData: [
+        { key: '1', tag: 'A-101', value: '48.1', status: true, progress: 76, action: 'write' },
+        { key: '2', tag: 'A-102', value: '49.7', status: false, progress: 42, action: 'write' },
       ],
     },
   },
@@ -187,10 +241,61 @@ export const materialCatalog: MaterialDefinition[] = [
       },
     },
   },
+  {
+    type: 'customHtml',
+    label: 'HTML',
+    category: '高级组件',
+    description: '通过 iframe 沙箱渲染用户自定义 HTML/CSS/JS，支持 ScadaBridge 实时数据桥接与第三方库加载。',
+    defaultProps: {
+      x: 80,
+      y: 80,
+      width: 400,
+      height: 300,
+      zIndex: 1,
+      htmlContent: '<div class="html-card">\n  <span>HTML 实时温度</span>\n  <strong id="html-temperature">--</strong>\n  <button id="html-setpoint">写入设定值</button>\n</div>',
+      cssContent: '.html-card {\n  box-sizing: border-box;\n  width: 100%;\n  height: 100%;\n  padding: 16px;\n  color: #e6edf3;\n  background: #0d2436;\n  border: 1px solid #30363d;\n  border-radius: 6px;\n  font-family: sans-serif;\n}\n.html-card span {\n  display: block;\n  color: #8b949e;\n  font-size: 13px;\n}\n.html-card strong {\n  display: block;\n  margin: 8px 0 12px;\n  font-size: 28px;\n}\n.html-card button {\n  height: 32px;\n  border: 1px solid #1a7f37;\n  border-radius: 6px;\n  color: #ffffff;\n  background: #1f883d;\n}',
+      jsContent: 'ScadaBridge.onReady(function () {\n  ScadaBridge.bindText("#html-temperature", "temperature", {\n    template: "{value} {unit}",\n    precision: 1,\n    fallback: "--"\n  });\n\n  ScadaBridge.bindWriteDialog("#html-setpoint", "setpoint", {\n    title: "写入设定值",\n    type: "number"\n  });\n});',
+      transparent: true,
+      libraryAssetIds: [],
+      sandboxPermissions: 'allow-scripts allow-modals',
+    },
+  },
+  {
+    type: 'image',
+    label: '图片',
+    category: '基础组件',
+    description: '用于展示设备图、工艺图、背景图或上传资产图片。',
+    defaultProps: {
+      x: 80,
+      y: 80,
+      width: 320,
+      height: 180,
+      zIndex: 1,
+      src: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><rect width="640" height="360" fill="%230d2436"/><rect x="80" y="108" width="480" height="144" rx="8" fill="%23161b22" stroke="%2330363d" stroke-width="4"/><circle cx="186" cy="180" r="46" fill="%230969da"/><circle cx="454" cy="180" r="46" fill="%231f883d"/><path d="M232 180h176" stroke="%23e6edf3" stroke-width="18" stroke-linecap="round"/><text x="320" y="312" text-anchor="middle" fill="%23e6edf3" font-family="Arial" font-size="28">SCADA IMAGE</text></svg>',
+      alt: '设备示意图',
+      objectFit: 'cover',
+      borderRadius: 6,
+      background: '#0d2436',
+    },
+  },
 ];
 
 export function cloneSchema<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function normalizeVariable(variable: ComponentVariable): ComponentVariable {
+  return {
+    ...variable,
+    displayName: variable.displayName || variable.name,
+    rwMode: variable.rwMode || 'RW',
+    unit: variable.unit || '',
+    initialValue: String(variable.initialValue ?? ''),
+    summary: String(variable.summary || ''),
+    scripts: {
+      onChange: String(variable.scripts?.onChange || ''),
+    },
+  };
 }
 
 export function createComponentNode(type: ComponentType): ComponentNode {
@@ -244,7 +349,7 @@ export function createEmptyPageSchema(name = '未命名页面'): PageSchema {
         gridSize: 20,
         timerIntervalMs: 0,
         padding: 0,
-        borderRadius: 24,
+        borderRadius: 6,
         minHeight: 560,
       },
       variables: [],
@@ -299,7 +404,9 @@ export function normalizeNode(node: ComponentNode): ComponentNode {
       height: toNumber(node.props.height, toNumber(defaultProps.height, 60)),
       zIndex: toNumber(node.props.zIndex, toNumber(defaultProps.zIndex, 1)),
     },
-    variables: Array.isArray(node.variables) ? node.variables : [],
+    variables: Array.isArray(node.variables)
+      ? node.variables.map((variable) => normalizeVariable(variable))
+      : [],
     scripts: {
       onOpen: String(node.scripts?.onOpen || node.scripts?.onLoad || ''),
       onClose: String(node.scripts?.onClose || ''),
@@ -320,12 +427,14 @@ export function normalizePageSchema(schema: PageSchema): PageSchema {
     gridSize: toNumber(normalizedRoot.props.gridSize, 20),
     timerIntervalMs: toNumber(normalizedRoot.props.timerIntervalMs, 0),
     background: String(normalizedRoot.props.background || '#081622'),
-    borderRadius: toNumber(normalizedRoot.props.borderRadius, 24),
+    borderRadius: toNumber(normalizedRoot.props.borderRadius, 6),
   };
 
   return {
     ...schema,
-    variables: Array.isArray(schema.variables) ? schema.variables : [],
+    variables: Array.isArray(schema.variables)
+      ? schema.variables.map((variable) => normalizeVariable(variable))
+      : [],
     scripts: {
       onOpen: String(schema.scripts?.onOpen || ''),
       onClose: String(schema.scripts?.onClose || ''),

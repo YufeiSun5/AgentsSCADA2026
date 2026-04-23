@@ -9,3 +9,5 @@ Rules:
 - Protocol `type` field must match `ComponentType` union value.
 - New protocols must be registered in `protocols/index.ts` componentProtocols map.
 - AI-facing documentation belongs in protocol `aiHints`, not scattered in comments.
+- `customHtml` protocol uses ScadaBridge methods (readTag/writeTag/subscribe/query/assetUrl), not standard Ctx methods.
+- `customHtml` aiHints must describe ScadaBridge.onReady() initialization pattern.

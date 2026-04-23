@@ -21,6 +21,15 @@ interface MaterialRenderProps {
 
 - 新增物料时导出需同步更新 `materials/index.ts`
 
+## customHtml 物料特殊规则
+
+- `CustomHtmlMaterial` 使用 iframe srcdoc 渲染，**禁止改为 Shadow DOM 或 dangerouslySetInnerHTML**
+- 编辑模式下 iframe 必须设置 `pointer-events: none`，预览模式下 `auto`
+- ScadaBridge SDK 源码位于 `utils/scadaBridge.ts`，单一导出 `SCADA_BRIDGE_SDK_SOURCE` 字符串
+- 父窗口消息路由器位于 `utils/bridgeManager.ts`，`BridgeManager` 类负责处理 readTag/writeTag/subscribe/query 请求
+- 当前 BridgeManager 使用 Mock 数据（⬆ 待接入真实 WebSocket 数据源）
+- `libraryAssetIds` 关联的 JS/CSS 库文件由后端 `AssetController` 提供，渲染时自动生成 `<script>` / `<link>` 标签
+
 ## 新增组件三位一体
 
 新建任何组件必须同时创建以下三个文件，缺一不可：
@@ -43,6 +52,7 @@ interface MaterialRenderProps {
 | `ConfigPanel` | `components/editor/ConfigPanel.tsx` | 右侧配置：属性/变量/事件/脚本编辑 |
 | `EditorToolbar` | `components/editor/EditorToolbar.tsx` | 顶栏：标题、状态、撤销/重做、保存、预览 |
 | `MaterialPalette` | `components/editor/MaterialPalette.tsx` | 左侧物料面板：拖拽卡片 |
+| `AssetManager` | `components/editor/AssetManager.tsx` | 资产管理：上传/列表/删除/库文件关联 |
 
 ## 状态管理（Zustand + Immer）
 
@@ -58,8 +68,20 @@ interface MaterialRenderProps {
 - 后续"接受部分代码"优先基于 Monaco 的 range / selection / diff hunk 能力
 - **禁止引入与 Monaco 职责重叠的第二套代码对比组件**
 
+## 资产管理（Asset）
+
+- 前端接口封装位于 `services/assetService.ts`：`uploadAsset` / `listAssets` / `deleteAsset` / `getAssetFileUrl`
+- 后端 API 路径 `/api/assets`，服务类 `AssetService`，实体 `SysAsset`
+- 文件存储路径由 `scada.storage.path` 配置，相对路径存入数据库
+- 上传文件扩展名白名单：png/jpg/jpeg/gif/webp/svg/js/css/json/woff/woff2/ttf/eot
+- **iframe 加载资产无需 JWT**，`/assets/*/file` 已配为 `permitAll`
+- ConfigPanel 中 customHtml 组件显示「资产」tab，集成 `AssetManager` 组件
+
 ## 样式约定
 
 - 全局样式位于 `frontend/src/styles/global.css`
 - 组件级样式优先内联或 CSS Module
-- 画布背景色默认 `#081622`（工业深色主题）
+- **UI 视觉规范详见 `.ai/instructions/ui-design.md`**（GitHub Primer 风格）
+- 画布背景色默认 `#0d1117`（GitHub 深色）
+- 面板/侧栏背景 `#f6f8fa`，边框 `#d0d7de`
+- 禁止渐变背景、磨砂模糊、大圆角（>12px）、装饰性阴影和动画光效

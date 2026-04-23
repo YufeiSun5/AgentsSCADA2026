@@ -8,7 +8,12 @@ interface EditorState {
   history: PageSchema[];
   future: PageSchema[];
   dragSnapshot: PageSchema | null;
-  setSchema: (schema: PageSchema) => void;
+  setSchema: (
+    schema: PageSchema,
+    options?: {
+      preserveSelection?: boolean;
+    },
+  ) => void;
   selectNode: (nodeId: string | null) => void;
   addNode: (
     type: ComponentType,
@@ -154,7 +159,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   history: [],
   future: [],
   dragSnapshot: null,
-  setSchema: (schema) => set({ schema: normalizePageSchema(cloneSchema(schema)), selectedId: null, history: [], future: [], dragSnapshot: null }),
+  setSchema: (schema, options) => {
+    const normalized_schema = normalizePageSchema(cloneSchema(schema));
+    const current_selected_id = get().selectedId;
+    const next_selected_id = options?.preserveSelection && current_selected_id
+      && findSelectedNode(normalized_schema, current_selected_id)
+      ? current_selected_id
+      : null;
+
+    set({
+      schema: normalized_schema,
+      selectedId: next_selected_id,
+      history: [],
+      future: [],
+      dragSnapshot: null,
+    });
+  },
   selectNode: (nodeId) => set({ selectedId: nodeId }),
   addNode: (type, position, options) => {
     const current = get().schema;

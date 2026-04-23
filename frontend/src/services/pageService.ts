@@ -4,7 +4,7 @@ import http from './http';
 
 const STORAGE_KEY = 'agents-scada-pages';
 const STORAGE_VERSION_KEY = 'agents-scada-pages-version';
-const STORAGE_VERSION = 'scada-layout-v2';
+const STORAGE_VERSION = 'scada-layout-v15-variable-script-modal';
 
 function seedLocalPages(force = false) {
   const currentVersion = window.localStorage.getItem(STORAGE_VERSION_KEY);

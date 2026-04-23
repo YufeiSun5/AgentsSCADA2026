@@ -4,7 +4,8 @@ import {
   ButtonMaterial,
   ChartMaterial,
   ContainerMaterial,
-  InputMaterial,
+  CustomHtmlMaterial,
+  ImageMaterial,
   TableMaterial,
   TextMaterial,
 } from '../materials';
@@ -40,7 +41,7 @@ function renderNode(
         style={{
           width: canvasWidth,
           height: canvasHeight,
-          borderRadius: Number(node.props.borderRadius || 24),
+          borderRadius: Number(node.props.borderRadius || 6),
           background,
           backgroundImage: `linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px)`,
           backgroundSize: `${gridSize}px ${gridSize}px`,
@@ -95,12 +96,21 @@ function renderNode(
           onRunScript={onRunScript}
         />
       );
-    case 'input':
-      return <InputMaterial page={page} node={node} />;
     case 'table':
       return <TableMaterial page={page} node={node} />;
     case 'chart':
       return <ChartMaterial page={page} node={node} />;
+    case 'image':
+      return <ImageMaterial page={page} node={node} />;
+    case 'customHtml':
+      return (
+        <CustomHtmlMaterial
+          page={page}
+          node={node}
+          interactive={interactive}
+          onRunScript={onRunScript}
+        />
+      );
     default:
       return <TextMaterial page={page} node={{ ...node, props: { ...node.props, text: '未知组件' } }} />;
   }

@@ -51,6 +51,7 @@ public class SecurityConfig {
                 .requestMatchers("/ws/**").permitAll()               // WebSocket 握手
                 .requestMatchers("/actuator/health").permitAll()     // 健康检查
                 .requestMatchers("/dev/**").permitAll()              // 开发/可行性测试接口（无需认证）
+                .requestMatchers("/assets/*/file").permitAll()       // 资产文件下载（iframe 内加载需要）
                 .requestMatchers("/admin/**").hasRole("admin")       // 管理员接口
                 .anyRequest().authenticated()                        // 其余需认证
             )

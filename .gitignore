@@ -1,0 +1,20 @@
+# vfox 本地 SDK 安装目录（包含大体积二进制，禁止入库）
+.vfox/
+**/.vfox/
+
+# IDE / 系统
+.idea/
+.vscode/*.log
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+**/*-dev.log
+**/backend-run.log
+
+# 依赖与构建产物（兜底，子目录 .gitignore 仍生效）
+node_modules/
+dist/
+build/
+target/

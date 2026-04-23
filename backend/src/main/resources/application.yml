@@ -35,6 +35,12 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     default-property-inclusion: non_null
 
+  # ===== 文件上传 =====
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 50MB
+
 server:
   port: 8080
   servlet:
@@ -83,6 +89,10 @@ scada:
     expire-minutes: 5
     # 前端心跳间隔（分钟），应小于 expire-minutes
     renew-interval-minutes: 2
+
+  # 资产文件存储路径（本地磁盘）
+  storage:
+    path: ${SCADA_STORAGE_PATH:./storage}
 
 # ===== Actuator =====
 management:

@@ -29,10 +29,10 @@ export const containerProtocol: ComponentProtocolDefinition = {
   ],
   supportedMethods: [
     {
-      name: 'Ctx.message.info',
+      name: 'message.info',
       summary: '在页面上提示说明信息。',
-      signature: 'Ctx.message.info(content: string)',
-      example: "Ctx.message.info('容器初始化完成');",
+      signature: 'message.info(content: string)',
+      example: "message.info('容器初始化完成');",
     },
   ],
   properties: [

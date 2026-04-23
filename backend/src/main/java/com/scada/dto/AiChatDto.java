@@ -16,11 +16,32 @@ public class AiChatDto {
     public record NodeSummary(String id, String type, String title,
                                Integer x, Integer y, Integer width, Integer height) {}
 
-    /** 前端请求：多轮对话历史 + 当前画布组件列表 */
-    public record Request(
-            List<ConversationMessage> messages,
-            List<NodeSummary> nodes
+    /** 结构化任务目标。 */
+    public record TaskTarget(
+            String scope,
+            String pageId,
+            String nodeId,
+            String variableId,
+            String file,
+            String componentType
     ) {}
+
+    /** 前端请求：支持显式 taskKind，也兼容旧版 messages + nodes。 */
+    public record Request(
+            String taskKind,
+            List<ConversationMessage> messages,
+            List<NodeSummary> nodes,
+            TaskTarget target,
+            Map<String, Object> context
+    ) {
+
+        public Request(
+                List<ConversationMessage> messages,
+                List<NodeSummary> nodes
+        ) {
+            this(null, messages, nodes, null, Map.of());
+        }
+    }
 
     /**
      * 后端返回的响应。
@@ -30,6 +51,17 @@ public class AiChatDto {
      */
     public record Response(
             String reply,
-            List<Map<String, Object>> actions
-    ) {}
+            List<Map<String, Object>> actions,
+            String resultType,
+            Object result,
+            List<String> warnings
+    ) {
+
+        public Response(
+                String reply,
+                List<Map<String, Object>> actions
+        ) {
+            this(reply, actions, null, null, List.of());
+        }
+    }
 }
