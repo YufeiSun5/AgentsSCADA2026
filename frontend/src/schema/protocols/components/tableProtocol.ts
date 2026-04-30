@@ -40,6 +40,12 @@ export const tableProtocol: ComponentProtocolDefinition = {
       example: 'components.call("runtime_variable_table", "setRows", [{ key: "page.温度", value: "42.5 ℃" }]);',
     },
     {
+      name: 'setDataSource',
+      summary: '兼容旧协议，运行态替换表格 dataSource 行数据。',
+      signature: 'components.call(componentIdOrName, "setDataSource", rows)',
+      example: 'components.call("device_table", "setDataSource", rows);',
+    },
+    {
       name: 'setRowData',
       summary: '运行态替换 AG Grid 行数据。',
       signature: 'components.call(componentIdOrName, "setRowData", rows)',
@@ -70,6 +76,12 @@ export const tableProtocol: ComponentProtocolDefinition = {
       example: 'components.call("device_table", "setColumnDefs", [{ field: "name", headerName: "名称" }]);',
     },
     {
+      name: 'setColumns',
+      summary: '兼容旧协议，运行态替换 columns 列定义。',
+      signature: 'components.call(componentIdOrName, "setColumns", columns)',
+      example: 'components.call("device_table", "setColumns", [{ dataIndex: "name", title: "名称" }]);',
+    },
+    {
       name: 'refresh',
       summary: '强制刷新表格单元格。',
       signature: 'components.call(componentIdOrName, "refresh")',
@@ -80,6 +92,18 @@ export const tableProtocol: ComponentProtocolDefinition = {
       summary: '跳转到指定分页页码，页码从 0 开始。',
       signature: 'components.call(componentIdOrName, "setPage", page)',
       example: 'components.call("device_table", "setPage", 0);',
+    },
+    {
+      name: 'clearRows',
+      summary: '清空当前运行态行数据。',
+      signature: 'components.call(componentIdOrName, "clearRows")',
+      example: 'components.call("device_table", "clearRows");',
+    },
+    {
+      name: 'autoSizeColumns',
+      summary: '按当前内容自动调整所有列宽。',
+      signature: 'components.call(componentIdOrName, "autoSizeColumns")',
+      example: 'components.call("device_table", "autoSizeColumns");',
     },
   ],
   properties: [
@@ -187,6 +211,7 @@ export const tableProtocol: ComponentProtocolDefinition = {
     '按钮列使用 cellType="button" 和 buttonText；输入列使用 cellType="input" 或 editable=true。',
     '开关列使用 cellType="switch"；进度列使用 cellType="progress"；状态标签使用 cellType="tag"。',
     '单元格动作只能使用 action: { type: "script" | "setPageVar" | "callComponent" } 这类 JSON 描述。',
+    '运行态更新表格使用 setRows/setRowData/appendRow/updateRow/deleteRow/clearRows/setColumnDefs/autoSizeColumns，不要直接访问 AG Grid React 实例。',
     'props.json 必须是严格 JSON，禁止在 JSON 内写 // 注释、函数、undefined 或尾逗号。',
   ],
 };

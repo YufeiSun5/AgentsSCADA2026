@@ -12,6 +12,7 @@ import {
   type SetRuntimeVariableOptions,
 } from '../../runtime/pageRuntime';
 import { getPage } from '../../services/pageService';
+import { realtimeService } from '../../services/realtimeService';
 import { executeScript } from '../../utils/scriptSandbox';
 
 export default function PreviewPage() {
@@ -64,6 +65,12 @@ export default function PreviewPage() {
         activeRuntime?.setVar(name, value, options),
       vars: activeRuntime?.getVarsApi(),
       components: activeRuntime?.getComponentsApi(),
+      tags: {
+        read: realtimeService.readTag.bind(realtimeService),
+        getSnapshot: realtimeService.getSnapshot.bind(realtimeService),
+        subscribe: realtimeService.subscribeTag.bind(realtimeService),
+        write: realtimeService.writeTag.bind(realtimeService),
+      },
       change,
       variableChange: change
         ? {
@@ -88,8 +95,13 @@ export default function PreviewPage() {
   ) => executeScript(
     script,
     buildScriptContext(activePage, activeNode, scriptSource, change),
-  ).catch(() => {
-    message.error(errorLabel);
+  ).catch((error: unknown) => {
+    // 运行态脚本错误必须进入控制台，方便实施人员定位 AI 生成脚本问题。
+    console.error(errorLabel, error);
+    const detail = error instanceof Error && error.message
+      ? `：${error.message}`
+      : '';
+    message.error(`${errorLabel}${detail}`);
   });
 
   const enqueueVariableChange = (change: RuntimeVariableChange) => {
@@ -187,32 +199,36 @@ export default function PreviewPage() {
       return undefined;
     }
 
-    void runScript(
-      page.scripts.onOpen,
-      page,
-      page.root,
-      '页面 onOpen 脚本执行失败',
-      'page_script',
-    );
-
-    const open_nodes = flattenNodes(page.root)
-      .map((node) => ({
-        node,
-        script: node.scripts.onOpen || node.scripts.onLoad,
-      }))
-      .filter((item) => item.script);
-
-    open_nodes.forEach((item) => {
+    const openTimer = window.setTimeout(() => {
       void runScript(
-        item.script,
+        page.scripts.onOpen,
         page,
-        item.node,
-        `组件 ${item.node.title} 的 onOpen 脚本执行失败`,
-        'component_script',
+        page.root,
+        '页面 onOpen 脚本执行失败',
+        'page_script',
       );
-    });
+
+      const open_nodes = flattenNodes(page.root)
+        .map((node) => ({
+          node,
+          script: node.scripts.onOpen || node.scripts.onLoad,
+        }))
+        .filter((item) => item.script);
+
+      open_nodes.forEach((item) => {
+        void runScript(
+          item.script,
+          page,
+          item.node,
+          `组件 ${item.node.title} 的 onOpen 脚本执行失败`,
+          'component_script',
+        );
+      });
+    }, 0);
 
     return () => {
+      window.clearTimeout(openTimer);
+
       void runScript(
         page.scripts.onClose,
         page,

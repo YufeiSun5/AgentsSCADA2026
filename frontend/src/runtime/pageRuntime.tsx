@@ -141,6 +141,12 @@ export interface RuntimeVarsApi {
 
 export interface RuntimeComponentsApi {
     call: (componentIdOrName: string, methodName: string, ...args: unknown[]) => unknown | Promise<unknown>;
+    setStyle: (componentIdOrName: string, style: Record<string, unknown>) => unknown | Promise<unknown>;
+    setProps: (componentIdOrName: string, props: Record<string, unknown>) => unknown | Promise<unknown>;
+    show: (componentIdOrName: string) => unknown | Promise<unknown>;
+    hide: (componentIdOrName: string) => unknown | Promise<unknown>;
+    enable: (componentIdOrName: string) => unknown | Promise<unknown>;
+    disable: (componentIdOrName: string) => unknown | Promise<unknown>;
 }
 
 const variableScopes: RuntimeVariableScope[] = ['page', 'tag', 'component'];
@@ -318,6 +324,7 @@ export class PageRuntime {
     private storeListeners = new Map<string, Set<() => void>>();
     private changeListeners = new Set<RuntimeChangeListener>();
     private componentMethods = new Map<string, RuntimeComponentMethods>();
+    private componentMethodStacks = new Map<string, Record<string, RuntimeComponentMethod[]>>();
     private changeSeq = 0;
 
     constructor(page: PageSchema)
@@ -509,16 +516,66 @@ export class PageRuntime {
             .filter(Boolean);
 
         keys.forEach((key) => {
-            this.componentMethods.set(key, methods);
+            const stacks = this.componentMethodStacks.get(key) || {};
+            Object.entries(methods).forEach(([method_name, method]) => {
+                stacks[method_name] = [...(stacks[method_name] || []), method];
+            });
+            this.componentMethodStacks.set(key, stacks);
+            this.refreshComponentMethods(key);
         });
 
         return () => {
             keys.forEach((key) => {
-                if (this.componentMethods.get(key) === methods) {
-                    this.componentMethods.delete(key);
+                const stacks = this.componentMethodStacks.get(key);
+                if (!stacks) {
+                    return;
                 }
+
+                Object.entries(methods).forEach(([method_name, method]) => {
+                    const stack = stacks[method_name] || [];
+                    const index = stack.lastIndexOf(method);
+                    if (index >= 0) {
+                        stack.splice(index, 1);
+                    }
+                    if (stack.length === 0) {
+                        delete stacks[method_name];
+                    } else {
+                        stacks[method_name] = stack;
+                    }
+                });
+
+                if (Object.keys(stacks).length === 0) {
+                    this.componentMethodStacks.delete(key);
+                } else {
+                    this.componentMethodStacks.set(key, stacks);
+                }
+                this.refreshComponentMethods(key);
             });
         };
+    }
+
+    private refreshComponentMethods(key: string)
+    {
+        const stacks = this.componentMethodStacks.get(key);
+        if (!stacks) {
+            this.componentMethods.delete(key);
+            return;
+        }
+
+        const methods: RuntimeComponentMethods = {};
+        Object.entries(stacks).forEach(([method_name, stack]) => {
+            const method = stack[stack.length - 1];
+            if (method) {
+                methods[method_name] = method;
+            }
+        });
+
+        if (Object.keys(methods).length === 0) {
+            this.componentMethods.delete(key);
+            return;
+        }
+
+        this.componentMethods.set(key, methods);
     }
 
     callComponent(
@@ -535,6 +592,36 @@ export class PageRuntime {
         }
 
         return method(...args);
+    }
+
+    setComponentStyle(componentIdOrName: string, style: Record<string, unknown>)
+    {
+        return this.callComponent(componentIdOrName, 'setStyle', style);
+    }
+
+    setComponentProps(componentIdOrName: string, props: Record<string, unknown>)
+    {
+        return this.callComponent(componentIdOrName, 'setProps', props);
+    }
+
+    showComponent(componentIdOrName: string)
+    {
+        return this.callComponent(componentIdOrName, 'show');
+    }
+
+    hideComponent(componentIdOrName: string)
+    {
+        return this.callComponent(componentIdOrName, 'hide');
+    }
+
+    enableComponent(componentIdOrName: string)
+    {
+        return this.callComponent(componentIdOrName, 'setDisabled', false);
+    }
+
+    disableComponent(componentIdOrName: string)
+    {
+        return this.callComponent(componentIdOrName, 'setDisabled', true);
     }
 
     getVarsApi(): RuntimeVarsApi
@@ -554,6 +641,12 @@ export class PageRuntime {
     {
         return {
             call: this.callComponent.bind(this),
+            setStyle: this.setComponentStyle.bind(this),
+            setProps: this.setComponentProps.bind(this),
+            show: this.showComponent.bind(this),
+            hide: this.hideComponent.bind(this),
+            enable: this.enableComponent.bind(this),
+            disable: this.disableComponent.bind(this),
         };
     }
 

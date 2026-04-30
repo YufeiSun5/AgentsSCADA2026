@@ -15,7 +15,7 @@ import { Empty, Spin, message } from 'antd';
 import { LeftOutlined, RightOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import AiLayoutAssistant from '../../components/editor/AiLayoutAssistant';
+import AiWorkbench, { type AiWorkbenchTarget } from '../../components/editor/AiWorkbench';
 import CanvasArea, { CANVAS_ROOT_ID } from '../../components/editor/CanvasArea';
 import ConfigPanel from '../../components/editor/ConfigPanel';
 import EditorToolbar from '../../components/editor/EditorToolbar';
@@ -35,6 +35,7 @@ export default function EditorPage() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [loading, setLoading] = useState(true);
   const [aiAssistantVisible, setAiAssistantVisible] = useState(false);
+  const [aiWorkbenchTarget, setAiWorkbenchTarget] = useState<AiWorkbenchTarget>({ scope: 'layout' });
   const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const lastDragDeltaRef = useRef({ x: 0, y: 0 });
@@ -288,7 +289,10 @@ export default function EditorPage() {
         aiVisible={aiAssistantVisible}
         onUndo={undo}
         onRedo={redo}
-        onToggleAiAssistant={() => setAiAssistantVisible((previous) => !previous)}
+        onToggleAiAssistant={() => {
+          setAiWorkbenchTarget({ scope: 'layout', label: '页面排版' });
+          setAiAssistantVisible((previous) => !previous);
+        }}
         onPreview={() => window.open(`/preview/${schema.id}`, '_blank')}
         onSave={async () => {
           const saved = await savePage(schema);
@@ -365,6 +369,12 @@ export default function EditorPage() {
               onPageVariablesChange={updatePageVariables}
               onPageScriptsChange={updatePageScripts}
               onPageSettingsChange={updatePageSettings}
+              onOpenAiWorkbench={(target, options) => {
+                setAiWorkbenchTarget(target);
+                if (options?.reveal !== false) {
+                  setAiAssistantVisible(true);
+                }
+              }}
               onCollapse={() => setRightCollapsed(true)}
             />
           </aside>
@@ -396,33 +406,21 @@ export default function EditorPage() {
         </button>
       )}
 
-      <AiLayoutAssistant
+      <AiWorkbench
         page={schema}
         selectedNode={selectedNode}
         visible={aiAssistantVisible}
         onVisibleChange={setAiAssistantVisible}
+        target={aiWorkbenchTarget}
+        onTargetChange={setAiWorkbenchTarget}
         onRevealNode={revealNodeInCanvas}
         onAddNode={addNode}
         onUpdatePageSettings={updatePageSettings}
         onUpdateNodeProps={updateNodeProps}
         onUpdateNodeTitle={updateNodeTitle}
-        onAfterActionsApplied={async () => {
-          const latestSchema = useEditorStore.getState().schema;
-          if (!latestSchema) {
-            return;
-          }
-
-          const saved = await savePage(latestSchema);
-          console.info('[AiLayoutAssistant] AI 动作应用后已自动保存页面', {
-            pageId: saved.id,
-            pageName: saved.name,
-            updatedAt: saved.updatedAt,
-            canvasWidth: saved.root.props.canvasWidth,
-            canvasHeight: saved.root.props.canvasHeight,
-            nodeCount: saved.root.children.length,
-          });
-          setSchema(saved, { preserveSelection: true });
-        }}
+        onUpdateNodeScripts={updateNodeScripts}
+        onUpdatePageScripts={updatePageScripts}
+        onUpdatePageVariables={updatePageVariables}
       />
     </div>
   );

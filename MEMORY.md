@@ -1,6 +1,6 @@
 # 开发进度追踪
 
-> 最后更新：2026-04-20（保存后保留 AI 选中组件）
+> 最后更新：2026-04-27（统一 AI 工作台第一版）
 
 ## 当前阶段
 
@@ -39,6 +39,57 @@
 - **AI 选中态保留修复（2026-04-20）**：
   - `editorStore.setSchema` 新增 `preserveSelection` 选项，保存后若节点仍存在则保留当前 `selectedId`
   - 编辑页手动保存与 AI 编排自动保存改为保留选中态，避免 `select_node` 成功后配置面板又退回页面级信息
+- **AI 默认服务商切换（2026-04-27）**：
+  - 本地开发库 `sys_ai_providers` 新增/更新 `deepseek-v4-flash`，baseUrl 使用 `https://api.deepseek.com`
+  - `deepseek-v4-flash` 设置为 `enabled=true` 且 `sort_order=0`，成为当前后端默认调用模型
+  - 未启用 `deepseek-v4-pro`，避免使用高成本模型
+- **AI 对话框模式与模型选择（2026-04-27）**：
+  - 开发 AI 接口支持 `providerKey` 与 `interactionMode=ask|agent`，提问模式只返回回答，不解析或应用结构化动作
+  - 新增 `/api/dev/ai/providers`，前端各 AI 对话框可独立选择当前窗口使用的模型，不暴露 API Key
+  - 排版助手、代码/属性/HTML AI、变量 AI、变量脚本 AI 均加入“提问/代理”切换；变量 AI 只在代理模式保留编辑意图拦截
+- **页面变量 + 大规模系统变量 AI 上下文（2026-04-27）**：
+  - 新增 `/api/dev/ai/context/system-variables/search`，按 `varTag/name/description` 关键词搜索系统变量候选，默认最多返回 20 条且不暴露运行时值
+  - 组件/代码 AI 工作台新增系统变量上下文篮，系统变量必须先搜索并手动加入，才会进入本次 AI prompt
+  - 代码 AI prompt 区分页面变量摘要与已加入系统变量，禁止 AI 编造未加入的系统点位 tag
+  - 后端新增 `workspace_agent` 任务代理与 `needs_context/change_set` 解析结果，为后续 MCP 工具协议适配预留入口
+- **统一 AI 工作台第一版（2026-04-27）**：
+  - 新增 `AiWorkbench`，承接排版、组件/页面脚本、页面变量和变量脚本入口，统一对话历史、模型选择、提问/代理模式和上下文篮
+  - 工具栏 AI 与配置面板代码/变量入口改为打开统一工作台目标；旧排版助手不再参与编辑页渲染，避免自动应用和自动保存
+  - 工作台请求统一携带页面摘要、页面变量摘要、手动加入的系统变量和组件上下文，并声明本地 MCP 预留能力
+  - `changeSet.actions` 在前端以待审批列表展示，props/布局/变量动作逐条确认，脚本动作先进入 Monaco Diff，接受后才写入当前前端草稿/store
+  - Review 修复：变量脚本入口在统一工作台存在时不再同时打开旧编辑器；脚本/组件动作审批会解析 `targetRef` 并校验目标存在；页面 `props.json` 入口改为 `page_settings` 目标；Diff 拒绝会同步标记 action 为 rejected
+  - 工作台 UI 优化：能力说明收进信息按钮悬停层；上下文篮改为可移除的系统变量/组件标签与紧凑搜索结果；编辑器切换 `props/onClick/onLoad` 等 tab 时会同步更新工作台当前文件目标
+  - 上下文篮补充可输入下拉框：系统变量按输入关键词远程模糊查询并下拉选择，页面组件支持本地模糊下拉；AI 工作台恢复标题栏拖动
+  - 上下文篮选择器拆为“页面变量 / 系统变量 / 组件”三段切换，页面变量也可模糊下拉加入；已加载上下文统一使用可关闭胶囊，组件显示 title/name 与摘要而非只显示 id
+  - 修复工作台脚本目标错位：上下文向 AI 明确提供当前组件 `supportedScriptFiles`；后端示例从 `onLoad.js` 改为按钮实际支持的 `onOpen.js`；前端审批时校验脚本文件，按钮若收到旧式 `onLoad.js` 会映射到可见的 `onOpen.js`
+  - 统一工作台恢复协议层说明上下文：组件和页面协议的 `summary/usage/supportedEvents/supportedMethods/properties/aiHints` 会随组件摘要一起发送给 AI，避免丢失物料说明
+  - 修复普通按钮状态变色链路：按钮物料注册 `setStyle/setBackgroundColor/setText/setButtonType/setDisabled` 运行态方法；普通脚本新增 `tags.read/tags.write/tags.subscribe` 系统点位 API；工作台和后端代理明确 `ScadaBridge` 仅限 customHtml，普通组件/页面脚本必须使用 `vars/tags/components.call`
+  - 新增项目 Skill：`.ai/skills/add-runtime-component-methods`，沉淀物料运行态方法添加流程，覆盖物料适配、协议同步、Monaco 类型提示、AI 上下文和验证清单
+  - 开发 AI 调用不再发送 `max_tokens`，避免 DeepSeek 等模型在复杂工作台任务中被本地 `max_tokens_per_req=2000` 截断为空 content
+  - 补齐文本、图表、图片、表格物料已实现运行态方法的协议说明；AI 工作台全页面组件列表改为轻量摘要，仅当前/加入组件携带完整协议，降低 prompt 体积；空 content 异常改为短错误，不再刷出整段 reasoning
+  - 运行态组件 API 加固：画布组件统一注册 `components.setStyle/setProps/show/hide/enable/disable` 通用方法，按钮等物料仍保留自己的专属方法；Monaco 类型提示、页面协议和 AI 工作台上下文同步更新，用户手写脚本与 AI 生成脚本使用同一套能力
+  - AI 工作台审批入口增加动作校验：未知 action、缺 `targetRef/summary/code/patch`、目标组件或变量不存在时会被拦截，不进入审批列表，避免空 Diff 或错误目标写入
+  - 新增 `frontend/scripts/check-runtime-method-protocol.mjs` 与 `npm run check:runtime-protocol`，自动扫描物料 `registerComponent` 方法是否已写入协议层，防止“运行时支持但 AI 不知道”
+  - AI 工作台变更审阅区重新设计：动作从聊天流中拆出为独立“变更审阅”面板，按待确认/已确认/已拒绝展示；每条动作提供“审阅/确认/拒绝”；脚本审阅打开可编辑 Monaco Diff，非脚本审阅打开可编辑 JSON 明细，确认后才写入草稿
+  - AI 工作台视觉层级二次优化：顶部改为明确的当前目标卡片，提问/代理和模型选择统一暗色控件；上下文来源改为“页面变量/系统变量/组件”三段大按钮并显示数量；上下文胶囊、下拉框、发送按钮和审阅按钮加强对比，降低 Codex/Copilot 风格工具面板里的操作歧义
+  - AI 工作台上下文选择交互改为来源卡片直达：点击“页面变量/系统变量/组件”卡片会直接弹出可勾选列表，页面变量与组件在弹层内本地过滤，系统变量在弹层内远程搜索；原统一下拉搜索降级为辅助说明，模型下拉增加明确“模型”标签
+  - AI 工作台可读性优化：顶部目标与模式/模型改为上下两行布局，模型选项拆分名称与模型 ID；上下文来源卡片压缩高度和间距，避免按钮被拉伸；聊天气泡、输入框、发送按钮和勾选弹层统一行高与对比度
+  - AI 工作台细节修复：模型下拉已选项改为单行展示并固定高度，弹层内模型选项仍保留名称/model 双行说明；上下文勾选弹层改为暗色细滚动条，列表高度收短，勾选框和列表行统一深色风格
+  - AI 工作台布局继续收敛：顶部目标与模式/模型改为左右并排的紧凑会话栏；上下文来源从大卡片改为短条工具按钮，数量使用 badge 呈现；选中上下文胶囊区限制高度并使用暗色细滚动条，降低面板拥挤感
+  - AI 工作台顶部错位修复：模式切换与模型选择改为同一基线，模型标签从竖排说明改为内联说明；右侧控制区固定宽度区间，避免模型标签被 Select 压到上沿
+  - AI 工作台目标栏修复：目标标签与目标文本改为单行内联展示，长目标只使用省略号，不再把目标值换到下一行
+  - AI 工作台组件命名修复：当前目标、上下文胶囊和组件选择项统一显示“组件类型 · 组件标题”，避免按钮标题包含“变量”时被误看成页面变量
+  - AI 工作台空页面新增组件修复：后端 `workspace_agent` 兼容裸 actions 数组、裸单个 action 和旧式 `actions` 返回，并统一包装为 `change_set`；提示词补充 `add_node` 新增两个按钮示例；前端 `add_node` 兼容 `nodeType/componentType/materialType` 和 props 中的位置字段
+  - AI 工作台新增组件别名兼容：前后端把模型常见的 `add_component/create_component/insert_component` 统一归一化为正式 `add_node`，避免空页面新增按钮被“不支持的动作类型”拦截
+  - AI 工作台页面变量创建闭环：前后端把 `add_variable/create_variable/add_page_variable` 归一化为 `update_page_variables`，并默认以 `mode=merge` 合并新增变量；“只添加按钮”不再强制要求先选择系统变量
+  - AI 工作台新增组件类型推断：`add_node` 支持 `node_type/component_type/material/kind` 等字段，并可从 summary/title 中的“按钮/文本/表格/图表/图片/HTML”推断组件类型，避免缺少 `nodeType` 时拦截新增按钮
+  - AI 工作台变量动作兼容增强：`update_page_variables` 可从顶层、`patch`、`props`、`value/defaultValue/initialValue` 中读取变量定义，避免“创建变量”审批后未正确落入页面变量；审阅面板改为只展示待确认动作，全部处理后自动收起
+  - AI 工作台脚本动作校验收紧：组件/页面脚本审批前校验 `file` 必须属于目标支持脚本文件，避免 `onLoad.js` 静默写入 `onOpen.js`
+  - 运行态组件方法注册改为栈式恢复：同一组件通用方法与物料专属方法同名覆盖后，卸载后会恢复上一层方法，不再误删 `setStyle/setDisabled` 等通用能力
+  - AI 工作台撤回前端自然语言硬解析：不再由前端根据“添加一个设备状态变量”等句式猜测变量名、类型或初始值；变量创建回到 AI 协议输出和逐步追问流程，前端只负责展示 `needs_context/ask_user` 与审批合法动作
+  - AI 工作台去硬编码收敛：撤除前后端 action 别名归一化、组件中文别名推断、从 summary/title 猜 nodeType、变量动作非 `variables[]` 结构兜底、按钮颜色推荐映射和脚本文件偏好；工作台只接受正式协议字段，错误协议由审批校验拦截或由 AI 返回 `needs_context`
+  - 预览运行态脚本修复：组件/页面 `onOpen` 延迟到组件运行态方法注册后一拍执行，避免 `components.call(..., "setStyle")` 在按钮刚挂载时找不到方法；普通脚本里的 `vars.subscribe` 回调第一个参数改为变量当前值，并把变量对象作为第三参数传入，降低 AI 和用户手写动态变色脚本的误用概率；脚本执行失败会输出 `console.error` 和详细 toast，方便现场排查
+  - AI 工作台页面变量审批修复：接收 `update_page_variables` 时保留模型返回的原始 `variables[]`，新增变量仍要求完整声明；修改已存在页面变量时允许通过 `id/name + patch字段` 更新，例如只调整 `initialValue`，避免“设置已有变量初始值”被误拦截
 
 ### 自定义 HTML 组件（customHtml）（2026-04-08 新完成）
 

@@ -38,21 +38,7 @@ export default function ContainerMaterial({
     >
       {node.children.length > 0 ? (
         <div className="schema-canvas-root schema-canvas-child-root">
-          {node.children.map((child) => (
-            <div
-              key={child.id}
-              className="schema-canvas-item"
-              style={{
-                left: Number(child.props.x || 0),
-                top: Number(child.props.y || 0),
-                width: Number(child.props.width || 240),
-                height: Number(child.props.height || 60),
-                zIndex: Number(child.props.zIndex || 1),
-              }}
-            >
-              {renderChild(page, child, interactive, onRunScript)}
-            </div>
-          ))}
+          {node.children.map((child) => renderChild(page, child, interactive, onRunScript))}
         </div>
       ) : (
         <Typography.Text type="secondary">空容器</Typography.Text>

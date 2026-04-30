@@ -4,8 +4,10 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scada.domain.entity.SysAiProvider;
+import com.scada.domain.entity.SysVariable;
 import com.scada.dto.AiChatDto;
 import com.scada.mapper.SysAiProviderMapper;
+import com.scada.mapper.SysVariableMapper;
 import com.scada.service.dev.agent.AiTaskAgent;
 import com.scada.service.dev.agent.AiTaskRouter;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +42,8 @@ public class AiDevChatService {
 
     private static final int TIMEOUT_SECONDS = 60;
     private static final int CONNECT_TIMEOUT_SECONDS = 20;
+    private static final int DEFAULT_SYSTEM_VARIABLE_SEARCH_LIMIT = 20;
+    private static final int MAX_SYSTEM_VARIABLE_SEARCH_LIMIT = 50;
     private static final Set<String> SUPPORTED_ACTION_TYPES = Set.of(
             "update_page", "add_node", "update_node", "select_node");
 
@@ -50,12 +54,12 @@ public class AiDevChatService {
             【代码辅助】帮助编写/优化组件脚本（JavaScript），reply 中必须包含 markdown 代码块，actions 返回 []
 
             ## 可用组件类型（add_node 时的 nodeType 值）
-            - customHtml: HTML/自定义 HTML/高级自定义组件
-            - text: 文本/标题/标签
-            - button: 按钮/操作键
-            - table: 表格/列表/台账
-            - chart: 图表/趋势图/折线图
-            - image: 图片/设备图/工艺图
+            - customHtml
+            - text
+            - button
+            - table
+            - chart
+            - image
 
             ## 组件约束
             - container 仅用于页面根节点和旧数据兼容，禁止 add_node 新增 container。
@@ -168,16 +172,44 @@ public class AiDevChatService {
             - 页面内逻辑优先使用 readVar/writeVar/subscribeVar；系统点位才使用 readTag/writeTag/subscribe。
             - 如果需要周期性写值，只在定时器内调用 writeTag/writeVar，不要在定时器内重复 bindText/bindVarText/bindWriteDialog。
 
+            ## 大规模系统变量上下文
+            - 系统变量可能有几万条，当前 prompt 只会包含用户手动加入上下文的系统变量。
+            - 未出现在“已手动加入的系统变量”中的系统点位禁止假设存在。
+            - 当用户要求基于变量做状态联动时，先检查页面变量摘要；若页面变量不足，且未加入相关系统变量，只回复需要先搜索并加入系统变量，不要编造 tag。
+            - 状态值含义只能从变量 name、varTag、description 推断；不明确时让用户确认 0/1/2 等状态映射。
+
             ## 响应格式
             - 顶层只输出纯 JSON，不要用 markdown 包裹整个 JSON。
             - 代码任务必须返回：{"reply":"说明文字\\n```javascript\\n完整代码\\n```","actions":[]}
             - reply 中必须包含当前文件的完整可替换代码 fenced code block。
             - actions 必须始终返回 []。
             - 不要返回 JSON patch、属性对象、布局动作、组件树、页面布局建议。
-            - 如果无法完成，就在 reply 中说明原因，actions 仍然返回 []。
+            - 如果缺少必要变量上下文或无法完成，就在 reply 中说明原因，actions 仍然返回 []，此时可以不包含代码块。
+            """;
+
+    /** 提问模式系统提示词：只回答，不生成可应用动作或结构化修改结果。 */
+    private static final String ASK_SYSTEM_PROMPT = """
+            你是工业 SCADA 低代码页面编辑平台的问答助手。
+            当前处于“提问模式”，你只能解释、总结、排查和回答问题，不能修改页面、变量、脚本或组件。
+
+            ## 当前目标
+            %s
+
+            ## 当前上下文
+            %s
+
+            ## 当前页面组件摘要
+            %s
+
+            ## 规则
+            - 用中文直接回答用户问题。
+            - 可以根据上下文列出当前变量、组件、脚本或配置状态。
+            - 不要输出 actions、JSON patch、可执行修改指令或 markdown fenced code block。
+            - 如果用户要求你改东西，请说明需要切换到“代理模式”再执行。
             """;
 
     private final SysAiProviderMapper providerMapper;
+    private final SysVariableMapper variableMapper;
     private final ObjectMapper objectMapper;
     private final AiTaskRouter aiTaskRouter;
 
@@ -192,13 +224,7 @@ public class AiDevChatService {
      * 找不到启用的 provider 时返回带提示的空 actions。
      */
     public AiChatDto.Response chat(AiChatDto.Request request) {
-        // 查询第一条启用的 AI 服务商配置
-        SysAiProvider provider = providerMapper.selectOne(
-                new LambdaQueryWrapper<SysAiProvider>()
-                        .eq(SysAiProvider::getEnabled, Boolean.TRUE)
-                        .orderByAsc(SysAiProvider::getSortOrder)
-                        .last("LIMIT 1")
-        );
+        SysAiProvider provider = selectProvider(request.providerKey());
 
         if (provider == null) {
             return new AiChatDto.Response(
@@ -221,7 +247,14 @@ public class AiDevChatService {
                 ? null
                 : aiTaskRouter.resolve(explicitTaskKind);
         boolean codeTask = isCodeTaskRequest(request.messages());
-        String systemPrompt = explicitTaskAgent != null
+        boolean askMode = isAskMode(request.interactionMode());
+        String systemPrompt = askMode
+                ? ASK_SYSTEM_PROMPT.formatted(
+                    serializeContext(request.target()),
+                    serializeContext(request.context()),
+                    nodesJson
+                )
+                : explicitTaskAgent != null
                 ? explicitTaskAgent.buildSystemPrompt(
                     serializeContext(request.target()),
                     serializeContext(request.context()),
@@ -240,15 +273,20 @@ public class AiDevChatService {
             }
         }
 
-        log.debug("[AiDev] provider={} model={} turns={} task={}",
+        log.debug("[AiDev] provider={} model={} turns={} mode={} task={}",
                 provider.getProviderKey(), provider.getModel(),
             request.messages() != null ? request.messages().size() : 0,
+            askMode ? "ask" : "agent",
             explicitTaskAgent != null
                 ? explicitTaskAgent.taskKind()
                 : codeTask ? "code" : "layout");
 
         try {
-            return callLlm(provider, glmMessages, explicitTaskAgent != null ? explicitTaskAgent.taskKind() : null);
+            return callLlm(
+                    provider,
+                    glmMessages,
+                    askMode ? "ask" : explicitTaskAgent != null ? explicitTaskAgent.taskKind() : null
+            );
         } catch (Exception e) {
             log.warn("[AiDev] LLM 调用异常: {}", e.getMessage());
             if (isConnectionTimeout(e)) {
@@ -259,6 +297,102 @@ public class AiDevChatService {
             }
             return new AiChatDto.Response("AI 服务调用失败：" + e.getMessage(), List.of());
         }
+    }
+
+    /**
+     * 查询启用的 AI 服务商列表，供前端下拉选择。
+     */
+    public List<AiChatDto.ProviderOption> listProviders() {
+        return providerMapper.selectList(
+                new LambdaQueryWrapper<SysAiProvider>()
+                        .eq(SysAiProvider::getEnabled, Boolean.TRUE)
+                        .orderByAsc(SysAiProvider::getSortOrder)
+                        .orderByAsc(SysAiProvider::getId)
+        ).stream()
+                .map(provider -> new AiChatDto.ProviderOption(
+                        provider.getProviderKey(),
+                        provider.getName(),
+                        provider.getModel(),
+                        provider.getSortOrder()
+                ))
+                .toList();
+    }
+
+    /**
+     * 搜索系统变量候选。
+     * 空关键词直接返回空列表，避免大规模点位被默认全量加载。
+     */
+    public List<AiChatDto.SystemVariableOption> searchSystemVariables(
+            String keyword,
+            Integer limit
+    ) {
+        String normalizedKeyword = keyword == null ? "" : keyword.trim();
+        if (normalizedKeyword.isBlank()) {
+            return List.of();
+        }
+
+        int normalizedLimit = limit == null
+                ? DEFAULT_SYSTEM_VARIABLE_SEARCH_LIMIT
+                : Math.max(1, Math.min(limit, MAX_SYSTEM_VARIABLE_SEARCH_LIMIT));
+        String[] tokens = normalizedKeyword.split("\\s+");
+
+        LambdaQueryWrapper<SysVariable> query = new LambdaQueryWrapper<>();
+        for (String token : tokens) {
+            if (token.isBlank()) {
+                continue;
+            }
+            query.and(item -> item
+                    .like(SysVariable::getVarTag, token)
+                    .or()
+                    .like(SysVariable::getName, token)
+                    .or()
+                    .like(SysVariable::getDescription, token)
+            );
+        }
+        query.orderByAsc(SysVariable::getGatewayId)
+                .orderByAsc(SysVariable::getVarTag)
+                .last("LIMIT " + normalizedLimit);
+
+        return variableMapper.selectList(query).stream()
+                .map(variable -> new AiChatDto.SystemVariableOption(
+                        variable.getId(),
+                        variable.getGatewayId(),
+                        variable.getVarTag(),
+                        variable.getName(),
+                        variable.getDataType(),
+                        variable.getRwMode(),
+                        variable.getUnit(),
+                        variable.getDescription(),
+                        variable.getAlarmEnable()
+                ))
+                .toList();
+    }
+
+    private SysAiProvider selectProvider(String providerKey) {
+        String normalizedProviderKey = providerKey == null ? "" : providerKey.trim();
+        if (!normalizedProviderKey.isEmpty()) {
+            SysAiProvider selectedProvider = providerMapper.selectOne(
+                    new LambdaQueryWrapper<SysAiProvider>()
+                            .eq(SysAiProvider::getEnabled, Boolean.TRUE)
+                            .eq(SysAiProvider::getProviderKey, normalizedProviderKey)
+                            .last("LIMIT 1")
+            );
+            if (selectedProvider != null) {
+                return selectedProvider;
+            }
+        }
+
+        return providerMapper.selectOne(
+                new LambdaQueryWrapper<SysAiProvider>()
+                        .eq(SysAiProvider::getEnabled, Boolean.TRUE)
+                        .orderByAsc(SysAiProvider::getSortOrder)
+                        .orderByAsc(SysAiProvider::getId)
+                        .last("LIMIT 1")
+        );
+    }
+
+    private boolean isAskMode(String interactionMode) {
+        return "ask".equalsIgnoreCase(interactionMode == null ? "" : interactionMode.trim());
     }
 
     /**
@@ -273,12 +407,11 @@ public class AiDevChatService {
             String explicitTaskKind
     )
             throws Exception {
-        // 构建 OpenAI 格式请求体
-        Map<String, Object> body = Map.of(
-                "model", provider.getModel(),
-                "messages", glmMessages,
-                "max_tokens", provider.getMaxTokensPerReq() != null ? provider.getMaxTokensPerReq() : 2000
-        );
+        // 构建 OpenAI 格式请求体。开发工作台不主动限制 max_tokens，
+        // 避免代理任务被本地配置截断，输出预算交给模型服务端控制。
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", provider.getModel());
+        body.put("messages", glmMessages);
         String requestJson = objectMapper.writeValueAsString(body);
 
         // 发送 HTTP 请求（OpenAI 格式：{baseUrl}/chat/completions，Authorization: Bearer 认证）
@@ -298,9 +431,30 @@ public class AiDevChatService {
 
         // 提取 OpenAI 响应格式：choices[0].message.content
         JsonNode root = objectMapper.readTree(httpResponse.body());
-        String content = root.path("choices").path(0).path("message").path("content").asText("");
+        JsonNode firstChoice = root.path("choices").path(0);
+        JsonNode messageNode = firstChoice.path("message");
+        String content = messageNode.path("content").asText("");
         if (content.isBlank()) {
-            throw new RuntimeException("LLM 响应中无 content 内容，原始响应：" + httpResponse.body());
+            String finishReason = firstChoice.path("finish_reason").asText("");
+            int reasoningLength = messageNode.path("reasoning_content").asText("").length();
+            String reason = "length".equals(finishReason)
+                    ? "模型输出被截断，未生成最终 JSON。"
+                    : "模型只返回了推理内容，未生成最终 JSON。";
+            throw new RuntimeException(
+                    "LLM 响应中无 content 内容：" + reason
+                            + "finish_reason=" + finishReason
+                            + "，reasoning_length=" + reasoningLength
+            );
+        }
+
+        if ("ask".equals(explicitTaskKind)) {
+            return new AiChatDto.Response(
+                    content.strip(),
+                    List.of(),
+                    "answer",
+                    null,
+                    List.of()
+            );
         }
 
         // 代码辅助任务不能盲目提取第一个 {}，否则会把 JS 中的 || {} 误当成 JSON patch。
@@ -449,6 +603,7 @@ public class AiDevChatService {
             case "variables_edit" -> parseVariablesTaskResponse(jsonContent);
             case "props_edit" -> parsePropsTaskResponse(jsonContent);
             case "custom_html_edit" -> parseCustomHtmlTaskResponse(jsonContent);
+            case "workspace_agent" -> parseWorkspaceTaskResponse(jsonContent);
             default -> new AiChatDto.Response("暂不支持的 AI 任务类型：" + rawTaskKind, List.of());
         };
     }
@@ -615,6 +770,225 @@ public class AiDevChatService {
         );
     }
 
+    private AiChatDto.Response parseWorkspaceTaskResponse(String jsonContent) {
+        JsonNode node = readStructuredJson(jsonContent);
+        if (node == null) {
+            AiChatDto.Response fallback = parseWorkspaceTaskFallback(jsonContent);
+            if (fallback != null) {
+                return fallback;
+            }
+            return new AiChatDto.Response("AI 未返回可解析的工作台结果。", List.of());
+        }
+
+        if (node.isArray()) {
+            List<Map<String, Object>> actions = readActionMaps(node);
+            return buildWorkspaceChangeSetResponse(
+                    "已生成工作台变更包。",
+                    "工作台变更",
+                    actions,
+                    List.of("AI 返回了裸 actions 数组，后端已包装为 change_set。")
+            );
+        }
+
+        if (!node.isObject()) {
+            return new AiChatDto.Response("AI 未返回可解析的工作台结果。", List.of());
+        }
+
+        if (node.has("type")) {
+            Map<String, Object> action = objectMapper.convertValue(
+                    node,
+                    objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class)
+            );
+            return buildWorkspaceChangeSetResponse(
+                    "已生成工作台变更包。",
+                    "工作台变更",
+                    List.of(action),
+                    List.of("AI 返回了裸单个 action，后端已包装为 change_set。")
+            );
+        }
+
+        if (node.has("actions") && !node.has("changeSet")) {
+            List<Map<String, Object>> actions = readActionMaps(node.path("actions"));
+            String reply = node.path("reply").asText("已生成工作台变更包。");
+            String title = node.path("title").asText("工作台变更");
+            return buildWorkspaceChangeSetResponse(reply, title, actions, readWarnings(node));
+        }
+
+        String reply = node.path("reply").asText("已生成工作台建议");
+        String resultType = node.path("resultType").asText("");
+        if (resultType.isBlank()) {
+            if (node.has("needsContext")) {
+                resultType = "needs_context";
+            } else if (node.has("changeSet")) {
+                resultType = "change_set";
+            } else {
+                resultType = "workspace";
+            }
+        }
+
+        Map<String, Object> result = objectMapper.convertValue(
+                node,
+                objectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class)
+        );
+        normalizeWorkspaceResult(result);
+
+        return new AiChatDto.Response(
+                reply,
+                List.of(),
+                resultType,
+                result,
+                readWarnings(node)
+        );
+    }
+
+    private AiChatDto.Response parseWorkspaceTaskFallback(String jsonContent) {
+        try {
+            AiChatDto.Response legacy = parseLegacyResponse(jsonContent, false);
+            if (legacy.actions() == null || legacy.actions().isEmpty()) {
+                return null;
+            }
+            return buildWorkspaceChangeSetResponse(
+                    legacy.reply(),
+                    "工作台变更",
+                    legacy.actions(),
+                    List.of("AI 未按工作台协议返回，后端已按旧 actions 格式兜底解析。")
+            );
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private AiChatDto.Response buildWorkspaceChangeSetResponse(
+            String reply,
+            String title,
+            List<Map<String, Object>> actions,
+            List<String> warnings
+    ) {
+        Map<String, Object> changeSet = new LinkedHashMap<>();
+        changeSet.put("title", title == null || title.isBlank() ? "工作台变更" : title);
+        changeSet.put("actions", normalizeWorkspaceActions(actions));
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("resultType", "change_set");
+        result.put("reply", reply == null || reply.isBlank() ? "已生成工作台变更包。" : reply);
+        result.put("changeSet", changeSet);
+        result.put("warnings", warnings == null ? List.of() : warnings);
+
+        return new AiChatDto.Response(
+                String.valueOf(result.get("reply")),
+                List.of(),
+                "change_set",
+                result,
+                warnings == null ? List.of() : warnings
+        );
+    }
+
+    private List<Map<String, Object>> readActionMaps(JsonNode actionsNode) {
+        if (!actionsNode.isArray()) {
+            return List.of();
+        }
+        return objectMapper.convertValue(
+                actionsNode,
+                objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private void normalizeWorkspaceResult(Map<String, Object> result) {
+        Object changeSetValue = result.get("changeSet");
+        if (!(changeSetValue instanceof Map<?, ?> rawChangeSet)) {
+            return;
+        }
+
+        Map<String, Object> changeSet = (Map<String, Object>) rawChangeSet;
+        Object actionsValue = changeSet.get("actions");
+        if (!(actionsValue instanceof List<?> rawActions)) {
+            return;
+        }
+
+        List<Map<String, Object>> actions = rawActions.stream()
+                .filter(Map.class::isInstance)
+                .map(item -> (Map<String, Object>) item)
+                .toList();
+        changeSet.put("actions", normalizeWorkspaceActions(actions));
+    }
+
+    private List<Map<String, Object>> normalizeWorkspaceActions(
+            List<Map<String, Object>> actions
+    ) {
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        for (int i = 0; i < actions.size(); i++) {
+            Map<String, Object> action = new LinkedHashMap<>(actions.get(i));
+            String id = String.valueOf(action.getOrDefault("id", "action-" + (i + 1)));
+            String type = normalizeWorkspaceActionType(
+                    String.valueOf(action.getOrDefault("type", ""))
+            );
+
+            action.putIfAbsent("id", id);
+            action.put("type", type);
+            action.putIfAbsent("status", "pending");
+
+            if ("add_node".equals(type)) {
+                Object nodeType = firstPresent(
+                        action.get("nodeType"),
+                        action.get("componentType"),
+                        action.get("materialType"),
+                        action.get("node_type"),
+                        action.get("component_type"),
+                        action.get("material_type"),
+                        action.get("component"),
+                        action.get("nodeKind"),
+                        action.get("material"),
+                        action.get("kind")
+                );
+                nodeType = normalizeComponentTypeValue(nodeType);
+                if (nodeType != null) {
+                    action.put("nodeType", nodeType);
+                }
+                action.putIfAbsent("targetRef", "new_node:" + id);
+            }
+            if ("update_page_variables".equals(type)) {
+                action.putIfAbsent("targetRef", "page_variables");
+                action.putIfAbsent("mode", "merge");
+                Object variables = action.get("variables");
+                if (variables instanceof List<?>) {
+                    action.put("variables", variables);
+                }
+            }
+
+            normalized.add(action);
+        }
+        return normalized;
+    }
+
+    private String normalizeWorkspaceActionType(String type) {
+        return type == null ? "" : type.trim();
+    }
+
+    private String normalizeComponentTypeValue(Object value) {
+        String text = value == null ? "" : String.valueOf(value).trim();
+        String lowerText = text.toLowerCase();
+        return switch (lowerText) {
+            case "container" -> "container";
+            case "button" -> "button";
+            case "text" -> "text";
+            case "table" -> "table";
+            case "chart" -> "chart";
+            case "image" -> "image";
+            case "customhtml" -> "customHtml";
+            default -> null;
+        };
+    }
+
+    private Object firstPresent(Object... values) {
+        for (Object value : values) {
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     private JsonNode readStructuredJson(String jsonContent) {
         try {
             return objectMapper.readTree(jsonContent);
@@ -740,7 +1114,8 @@ public class AiDevChatService {
         if ("variables_edit".equals(normalizedTaskKind)
                 || "props_edit".equals(normalizedTaskKind)
                 || "custom_html_edit".equals(normalizedTaskKind)
-                || "layout".equals(normalizedTaskKind)) {
+                || "layout".equals(normalizedTaskKind)
+                || "workspace_agent".equals(normalizedTaskKind)) {
             return evalNumericExpressions(extractJson(trimmed));
         }
 

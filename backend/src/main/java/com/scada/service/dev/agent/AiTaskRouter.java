@@ -35,6 +35,7 @@ public class AiTaskRouter {
             case "script", "script_edit" -> "script_edit";
             case "variables", "variables_edit" -> "variables_edit";
             case "custom_html", "custom_html_edit" -> "custom_html_edit";
+            case "workspace", "workspace_agent" -> "workspace_agent";
             default -> taskKind;
         };
     }

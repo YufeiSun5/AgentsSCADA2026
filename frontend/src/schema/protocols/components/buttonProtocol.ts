@@ -57,6 +57,12 @@ export const buttonProtocol: ComponentProtocolDefinition = {
       signature: 'writeBack.enabled = true; writeBack.source = "page"; writeBack.variableName = "page.页面模式"',
       example: 'writeBack: { enabled: true, source: "page", variableName: "page.页面模式", value: "manual" }',
     },
+    {
+      name: 'components.call',
+      summary: '运行态修改按钮显示样式或文案。',
+      signature: 'components.call(componentIdOrName, "setStyle" | "setBackgroundColor" | "setText" | "clearText" | "setButtonType" | "setDisabled" | "clearRuntimeState", value)',
+      example: 'components.call("start_button", "setStyle", { backgroundColor: "#4CAF50", borderColor: "#4CAF50", color: "#fff" });',
+    },
   ],
   properties: [
     {
@@ -108,6 +114,30 @@ export const buttonProtocol: ComponentProtocolDefinition = {
       example: 'primary',
     },
     {
+      name: 'backgroundColor',
+      type: 'string',
+      required: false,
+      summary: '按钮默认背景色。',
+      usage: '作为静态默认态；运行态动态变色应使用 components.call(..., "setStyle", ...)。',
+      example: '#8b949e',
+    },
+    {
+      name: 'borderColor',
+      type: 'string',
+      required: false,
+      summary: '按钮默认边框色。',
+      usage: '通常与 backgroundColor 保持一致。',
+      example: '#8b949e',
+    },
+    {
+      name: 'color',
+      type: 'string',
+      required: false,
+      summary: '按钮文字颜色。',
+      usage: '深色背景按钮通常设置为 #ffffff。',
+      example: '#ffffff',
+    },
+    {
       name: 'writeBack',
       type: 'object',
       required: false,
@@ -121,6 +151,7 @@ export const buttonProtocol: ComponentProtocolDefinition = {
     '涉及启停、复位、阀门开关时，confirmRequired 应为 true。',
     '只改变当前页面逻辑状态时，writeBack 使用 source: "page" 和 variableName，避免误写后端系统点位。',
     '按钮脚本直接使用 vars 和 message；vars.set 默认自动补脚本来源，reason 可按需再写。',
+    '按钮动态变色使用 vars.subscribe(name, (value) => ...) 监听页面变量值，并调用 components.call("按钮id或name", "setStyle", { backgroundColor, borderColor, color })；不要使用 ScadaBridge。',
     '页面局部变量名允许中文，例如 page.页面模式；变量名作为字符串保存，不要生成 JS 点访问表达式。',
   ],
 };

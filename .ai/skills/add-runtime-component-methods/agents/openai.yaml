@@ -1,0 +1,4 @@
+interface:
+  display_name: "添加运行态组件方法"
+  short_description: "为 SCADA 物料组件添加脚本可调用的运行态方法。"
+  default_prompt: "为这个物料补齐运行态组件方法，并同步协议、AI 上下文和类型提示。"

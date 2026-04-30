@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "check:runtime-protocol": "node scripts/check-runtime-method-protocol.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -29,6 +29,8 @@ public class AiChatDto {
     /** 前端请求：支持显式 taskKind，也兼容旧版 messages + nodes。 */
     public record Request(
             String taskKind,
+            String providerKey,
+            String interactionMode,
             List<ConversationMessage> messages,
             List<NodeSummary> nodes,
             TaskTarget target,
@@ -39,9 +41,30 @@ public class AiChatDto {
                 List<ConversationMessage> messages,
                 List<NodeSummary> nodes
         ) {
-            this(null, messages, nodes, null, Map.of());
+            this(null, null, null, messages, nodes, null, Map.of());
         }
     }
+
+    /** 可选 AI 服务商，不包含 api_key。 */
+    public record ProviderOption(
+            String providerKey,
+            String name,
+            String model,
+            Integer sortOrder
+    ) {}
+
+    /** 系统变量搜索候选，不包含运行时值。 */
+    public record SystemVariableOption(
+            Long id,
+            Long gatewayId,
+            String varTag,
+            String name,
+            String dataType,
+            String rwMode,
+            String unit,
+            String description,
+            Integer alarmEnable
+    ) {}
 
     /**
      * 后端返回的响应。

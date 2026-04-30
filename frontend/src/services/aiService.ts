@@ -30,6 +30,32 @@ export interface AiChatResult {
   warnings?: string[];
 }
 
+export type AiInteractionMode = 'ask' | 'agent';
+
+export interface AiProviderOption {
+  providerKey: string;
+  name: string;
+  model: string;
+  sortOrder: number;
+}
+
+export interface SystemVariableOption {
+  id: number;
+  gatewayId: number | null;
+  varTag: string;
+  name: string;
+  dataType: string;
+  rwMode: string;
+  unit: string | null;
+  description: string | null;
+  alarmEnable: number | null;
+}
+
+export interface AiRequestOptions {
+  providerKey?: string;
+  interactionMode?: AiInteractionMode;
+}
+
 /** 单条对话消息（与后端 AiChatDto.ConversationMessage 对应） */
 export interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -269,6 +295,7 @@ function parseEmbeddedAiResult(rawReply: string): Partial<AiChatResult> | null {
 export async function callAiChat(
   messages: ConversationMessage[],
   nodes: NodeSummary[],
+  options: AiRequestOptions = {},
 ): Promise<AiChatResult> {
   console.groupCollapsed(`${AI_LAYOUT_DEBUG_PREFIX} 前端发送 AI 编排请求`);
   console.info('发送消息数', messages.length);
@@ -288,7 +315,12 @@ export async function callAiChat(
   // LLM 响应可能较慢，单独设置 60s 超时
   const response = await http.post<{ code: number; data: AiChatResult }>(
     '/dev/ai/chat',
-    { messages, nodes },
+    {
+      messages,
+      nodes,
+      providerKey: options.providerKey || null,
+      interactionMode: options.interactionMode || 'agent',
+    },
     { timeout: 60_000 },
   );
   const result = response.data.data;
@@ -329,4 +361,23 @@ export async function callAiChat(
     result: result?.result ?? null,
     warnings: Array.isArray(result?.warnings) ? result.warnings : [],
   };
+}
+
+export async function fetchAiProviders(): Promise<AiProviderOption[]> {
+  const response = await http.get<{ code: number; data: AiProviderOption[] }>('/dev/ai/providers');
+  return Array.isArray(response.data.data) ? response.data.data : [];
+}
+
+export async function searchSystemVariables(
+  keyword: string,
+  limit = 20,
+): Promise<SystemVariableOption[]> {
+  const response = await http.get<{ code: number; data: SystemVariableOption[] }>(
+    '/dev/ai/context/system-variables/search',
+    {
+      params: { keyword, limit },
+    },
+  );
+
+  return Array.isArray(response.data.data) ? response.data.data : [];
 }

@@ -7,6 +7,14 @@ import type {
   RuntimeVarsApi,
   RuntimeVariableChange,
 } from '../runtime/pageRuntime';
+import type { RealtimePoint, WriteTagOptions, WriteTagResult } from '../services/realtimeService';
+
+export interface ScriptTagsApi {
+  read: (tag: string) => Promise<RealtimePoint>;
+  getSnapshot: (tag: string) => RealtimePoint | null;
+  subscribe: (tag: string, listener: (point: RealtimePoint) => void) => () => void;
+  write: (tag: string, value: unknown, options?: WriteTagOptions) => Promise<WriteTagResult>;
+}
 
 export interface ScriptContext {
   message: {
@@ -25,6 +33,7 @@ export interface ScriptContext {
   ) => void;
   vars?: RuntimeVarsApi;
   components?: RuntimeComponentsApi;
+  tags?: ScriptTagsApi;
   change?: RuntimeVariableChange;
   variableChange?: {
     name: string;
@@ -61,7 +70,16 @@ function bindScriptVarsApi(
     getValue: vars.getValue,
     all: vars.all,
     values: vars.values,
-    subscribe: vars.subscribe,
+    subscribe: (name, listener) =>
+      vars.subscribe(name, (variable, change) => {
+        const valueListener = listener as unknown as (
+          value: unknown,
+          change?: unknown,
+          variable?: unknown,
+        ) => void;
+
+        valueListener(variable.value, change, variable);
+      }),
     set: (name, value, options) =>
       vars.set(name, value, withDefaultScriptSource(options, defaultSource)),
     patch: (name, patch, options) =>
@@ -95,6 +113,7 @@ export async function executeScript(script: string | undefined, context: ScriptC
     'setPageVariable',
     'vars',
     'components',
+    'tags',
     'change',
     'variableChange',
     'onVariableChange',
@@ -112,6 +131,7 @@ export async function executeScript(script: string | undefined, context: ScriptC
     setPageVariable: ScriptContext['setPageVariable'],
     varsApi: RuntimeVarsApi | undefined,
     componentsApi: RuntimeComponentsApi | undefined,
+    tagsApi: ScriptTagsApi | undefined,
     change: RuntimeVariableChange | undefined,
     variableChange: ScriptContext['variableChange'],
     onVariableChange: ScriptContext['onVariableChange'],
@@ -125,6 +145,7 @@ export async function executeScript(script: string | undefined, context: ScriptC
     setPageVariable,
     vars,
     context.components,
+    context.tags,
     context.change,
     context.variableChange,
     context.onVariableChange,

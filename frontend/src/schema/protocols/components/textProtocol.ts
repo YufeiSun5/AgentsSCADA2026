@@ -33,6 +33,18 @@ export const textProtocol: ComponentProtocolDefinition = {
       example: "message.success('标题已刷新');",
     },
     {
+      name: 'setText',
+      summary: '运行态替换文本显示内容。',
+      signature: 'components.call(componentIdOrName, "setText", value)',
+      example: 'components.call("text_mode", "setText", "页面模式：手动");',
+    },
+    {
+      name: 'clearText',
+      summary: '清除运行态手动文本，恢复静态 text 或 binding 显示。',
+      signature: 'components.call(componentIdOrName, "clearText")',
+      example: 'components.call("text_mode", "clearText");',
+    },
+    {
       name: 'Realtime.subscribeTag',
       summary: '运行态由组件内部使用，用于订阅后端实时变量。',
       signature: 'binding.enabled = true; binding.tagName = "temperature"',
@@ -131,6 +143,7 @@ export const textProtocol: ComponentProtocolDefinition = {
     '需要显示后端实时数据时，使用 binding 配置，不要生成轮询脚本。',
     '需要点击文本写入设定值时，使用 writeBack 配置，回写由统一实时服务处理。',
     '文本脚本直接使用 vars、components、message 和 change，不要生成 Ctx.xxx。',
+    '运行态临时改文案使用 components.call(componentIdOrName, "setText", value)，恢复配置显示使用 clearText。',
     '需要读写页面局部变量时，binding/writeBack 设置 source: "page" 并使用 variableName，例如 page.温度；中文变量名必须作为字符串保存。',
   ],
 };

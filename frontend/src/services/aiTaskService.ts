@@ -3,14 +3,15 @@
  * 负责按 taskKind 调用后端统一 AI 接口，减少前端通过 reply 文本猜任务结果。
  */
 import http from './http';
-import type { AiAction, ConversationMessage, NodeSummary } from './aiService';
+import type { AiAction, AiInteractionMode, ConversationMessage, NodeSummary } from './aiService';
 
 export type AiTaskKind =
     | 'layout'
     | 'props_edit'
     | 'script_edit'
     | 'variables_edit'
-    | 'custom_html_edit';
+    | 'custom_html_edit'
+    | 'workspace_agent';
 
 export interface AiTaskTarget {
     scope?: string;
@@ -23,6 +24,8 @@ export interface AiTaskTarget {
 
 export interface AiTaskRequest {
     taskKind: AiTaskKind;
+    providerKey?: string;
+    interactionMode?: AiInteractionMode;
     messages: ConversationMessage[];
     nodes?: NodeSummary[];
     target?: AiTaskTarget;
@@ -48,6 +51,12 @@ export interface AiVariablesTaskResult {
     selectedVariableName?: string;
 }
 
+export interface AiWorkspaceTaskResult {
+    resultType?: string;
+    needsContext?: Array<Record<string, unknown>>;
+    changeSet?: Record<string, unknown>;
+}
+
 function normalizeTaskResponse<TResult>(payload: Partial<AiTaskResponse<TResult>> | null | undefined) {
     return {
         reply: payload?.reply || '',
@@ -67,6 +76,8 @@ export async function callAiTask<TResult = unknown>(
         '/dev/ai/chat',
         {
             taskKind: request.taskKind,
+            providerKey: request.providerKey || null,
+            interactionMode: request.interactionMode || 'agent',
             messages: request.messages,
             nodes: request.nodes || [],
             target: request.target || null,
@@ -93,5 +104,14 @@ export async function callAiVariablesEditTask(
     return callAiTask<AiVariablesTaskResult>({
         ...request,
         taskKind: 'variables_edit',
+    });
+}
+
+export async function callAiWorkspaceTask(
+    request: Omit<AiTaskRequest, 'taskKind'>,
+): Promise<AiTaskResponse<AiWorkspaceTaskResult>> {
+    return callAiTask<AiWorkspaceTaskResult>({
+        ...request,
+        taskKind: 'workspace_agent',
     });
 }

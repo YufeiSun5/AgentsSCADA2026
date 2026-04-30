@@ -7,6 +7,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 /**
  * 开发/可行性测试专用：AI 编排接口，无需携带 JWT。
  * 仅在开发阶段使用，生产环境应移除或添加认证。
@@ -35,5 +37,25 @@ public class AiDevController {
             log.error("[AiDev] 控制器未捕获异常 {}: {}", t.getClass().getName(), t.getMessage(), t);
             return R.fail(500, "AI 服务异常：" + t.getClass().getSimpleName() + " - " + t.getMessage());
         }
+    }
+
+    /**
+     * 返回当前启用的开发 AI 服务商列表，不暴露 api_key。
+     */
+    @GetMapping("/providers")
+    public R<List<AiChatDto.ProviderOption>> providers() {
+        return R.ok(aiDevChatService.listProviders());
+    }
+
+    /**
+     * 搜索系统变量候选。
+     * 大规模点位只按关键词返回少量候选，不默认进入 AI prompt。
+     */
+    @GetMapping("/context/system-variables/search")
+    public R<List<AiChatDto.SystemVariableOption>> searchSystemVariables(
+            @RequestParam(defaultValue = "") String keyword,
+            @RequestParam(defaultValue = "20") Integer limit
+    ) {
+        return R.ok(aiDevChatService.searchSystemVariables(keyword, limit));
     }
 }

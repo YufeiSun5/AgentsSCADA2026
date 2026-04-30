@@ -32,6 +32,30 @@ export const chartProtocol: ComponentProtocolDefinition = {
       signature: 'message.info(content: string)',
       example: "message.info('趋势图已完成刷新');",
     },
+    {
+      name: 'setOption',
+      summary: '运行态合并或替换 ECharts option。',
+      signature: 'components.call(componentIdOrName, "setOption", option)',
+      example: 'components.call("runtime_chart", "setOption", { series: [{ data: [1, 2, 3] }] });',
+    },
+    {
+      name: 'appendData',
+      summary: '运行态向 ECharts 系列追加数据。',
+      signature: 'components.call(componentIdOrName, "appendData", payload)',
+      example: 'components.call("runtime_chart", "appendData", { seriesIndex: 0, data: [[Date.now(), 42]] });',
+    },
+    {
+      name: 'clear',
+      summary: '清空图表当前运行态内容。',
+      signature: 'components.call(componentIdOrName, "clear")',
+      example: 'components.call("runtime_chart", "clear");',
+    },
+    {
+      name: 'resize',
+      summary: '触发布局变化后的图表重绘。',
+      signature: 'components.call(componentIdOrName, "resize")',
+      example: 'components.call("runtime_chart", "resize");',
+    },
   ],
   properties: [
     {
@@ -78,5 +102,6 @@ export const chartProtocol: ComponentProtocolDefinition = {
   aiHints: [
     'AI 生成图表时，不要省略 xAxis、yAxis 和 series。',
     '工业趋势图默认应带 tooltip 和时间轴类目。',
+    '运行态更新图表使用 components.call 的 setOption/appendData/clear/resize，不要直接操作 ECharts DOM。',
   ],
 };

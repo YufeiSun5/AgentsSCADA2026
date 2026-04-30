@@ -18,10 +18,22 @@ export const imageProtocol: ComponentProtocolDefinition = {
       example: 'components.call("runtime_state_image", "setSrc", svgDataUrl);',
     },
     {
+      name: 'clearSrc',
+      summary: '清除运行态图片 URL，恢复配置中的 assetId 或 src。',
+      signature: 'components.call(componentIdOrName, "clearSrc")',
+      example: 'components.call("runtime_state_image", "clearSrc");',
+    },
+    {
       name: 'setBackground',
       summary: '运行态替换图片容器背景色。',
       signature: 'components.call(componentIdOrName, "setBackground", color)',
       example: 'components.call("runtime_state_image", "setBackground", "#3b1218");',
+    },
+    {
+      name: 'setObjectFit',
+      summary: '运行态切换图片填充方式。',
+      signature: 'components.call(componentIdOrName, "setObjectFit", objectFit)',
+      example: 'components.call("runtime_state_image", "setObjectFit", "contain");',
     },
   ],
   properties: [
@@ -81,6 +93,6 @@ export const imageProtocol: ComponentProtocolDefinition = {
   aiHints: [
     '生成图片组件时，优先使用 assetId；没有资产时才使用 src。',
     '设备图和工艺图通常使用 objectFit: contain，避免裁切关键信息。',
-    '需要根据变量状态切换图片时，使用组件方法 setSrc / setBackground，不要直接操作 img DOM。',
+    '需要根据变量状态切换图片时，使用组件方法 setSrc / clearSrc / setBackground / setObjectFit，不要直接操作 img DOM。',
   ],
 };

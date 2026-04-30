@@ -24,13 +24,23 @@ import {
     DeleteOutlined,
     PlusOutlined,
     RightOutlined,
+    SearchOutlined,
     SendOutlined,
 } from '@ant-design/icons';
 import Editor, { DiffEditor } from '@monaco-editor/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cloneSchema, findNodeById, flattenNodes, type ComponentNode, type ComponentScripts, type ComponentVariable, type ComponentVariableType, type PageSchema, type PageScripts } from '../../schema/pageSchema';
 import { getComponentProtocol, pageCanvasProtocol } from '../../schema/componentProtocol';
-import { callAiChat, type AiAction } from '../../services/aiService';
+import type { AiWorkbenchTarget } from './AiWorkbench';
+import {
+    callAiChat,
+    fetchAiProviders,
+    searchSystemVariables,
+    type AiAction,
+    type AiInteractionMode,
+    type AiProviderOption,
+    type SystemVariableOption,
+} from '../../services/aiService';
 import { callAiScriptEditTask, callAiVariablesEditTask } from '../../services/aiTaskService';
 import AssetManager from './AssetManager';
 
@@ -46,6 +56,61 @@ type CustomHtmlFullTab = 'fullHtml';
 type CustomHtmlSplitTab = keyof CustomHtmlParts;
 type CustomHtmlContentTab = CustomHtmlFullTab | CustomHtmlSplitTab;
 type WorkspaceTab = 'propsJson' | ScriptEntryKey | CustomHtmlContentTab;
+
+function getDefaultProviderKey(providers: AiProviderOption[]) {
+    return providers[0]?.providerKey || '';
+}
+
+function renderAiDialogControls({
+    mode,
+    providerKey,
+    providers,
+    disabled,
+    onModeChange,
+    onProviderChange,
+    onRequestProviders,
+}: {
+    mode: AiInteractionMode;
+    providerKey: string;
+    providers: AiProviderOption[];
+    disabled: boolean;
+    onModeChange: (mode: AiInteractionMode) => void;
+    onProviderChange: (providerKey: string) => void;
+    onRequestProviders?: () => void;
+}) {
+    return (
+        <Space size={8} wrap>
+            <Segmented
+                size="small"
+                value={mode}
+                disabled={disabled}
+                options={[
+                    { label: '提问', value: 'ask' },
+                    { label: '代理', value: 'agent' },
+                ]}
+                onChange={(value) => onModeChange(value as AiInteractionMode)}
+            />
+            <Select
+                size="small"
+                value={providerKey || undefined}
+                disabled={disabled}
+                placeholder="默认模型"
+                style={{ width: 220 }}
+                notFoundContent="暂无可选模型"
+                options={providers.map((provider) => ({
+                    label: `${provider.name} · ${provider.model}`,
+                    value: provider.providerKey,
+                }))}
+                onChange={onProviderChange}
+                onDropdownVisibleChange={(open) => {
+                    if (open && providers.length === 0) {
+                        onRequestProviders?.();
+                    }
+                }}
+            />
+        </Space>
+    );
+}
 
 const customHtmlFullTab: CustomHtmlFullTab = 'fullHtml';
 const customHtmlSplitTabs: CustomHtmlSplitTab[] = ['htmlContent', 'cssContent', 'jsContent'];
@@ -107,12 +172,52 @@ declare const vars: {
     values(): Record<string, any>;
     subscribe(
         name: string,
-        listener: (variable: any, change?: any) => void,
+        listener: (value: any, change?: any, variable?: any) => void,
     ): () => void;
 };
 
 declare const components: {
     call(componentIdOrName: string, methodName: string, ...args: any[]): any;
+    setStyle(componentIdOrName: string, style: Record<string, any>): any;
+    setProps(componentIdOrName: string, props: Record<string, any>): any;
+    show(componentIdOrName: string): any;
+    hide(componentIdOrName: string): any;
+    enable(componentIdOrName: string): any;
+    disable(componentIdOrName: string): any;
+};
+
+declare const tags: {
+    read(tag: string): Promise<{
+        tag: string;
+        value: any;
+        unit?: string;
+        quality: string;
+        ts: number;
+    }>;
+    getSnapshot(tag: string): {
+        tag: string;
+        value: any;
+        unit?: string;
+        quality: string;
+        ts: number;
+    } | null;
+    subscribe(
+        tag: string,
+        listener: (point: {
+            tag: string;
+            value: any;
+            unit?: string;
+            quality: string;
+            ts: number;
+        }) => void,
+    ): () => void;
+    write(tag: string, value: any, options?: { action?: string; confirmId?: string }): Promise<{
+        success: boolean;
+        message: string;
+        tag: string;
+        value: any;
+        ts: number;
+    }>;
 };
 
 declare function setPageVariable(
@@ -897,19 +1002,51 @@ function buildRuntimeVariableAiContext(page: PageSchema)
 
     const lines = [
         '【页面变量运行时规则】',
-        '- 页面脚本和组件脚本直接使用全局对象 vars、components、message、change、page、node，不要生成 Ctx.xxx。',
+        '- 页面脚本和组件脚本直接使用全局对象 vars、tags、components、message、change、page、node，不要生成 Ctx.xxx。',
         '- 页面局部变量使用 page.<变量名> 命名，变量名允许中文；脚本必须用字符串 API，例如 vars.getValue("page.温度")，不要写 vars.page.温度。',
         '- RuntimeVariable 外层包含 value、previousValue、valueTs、previousValueTs、quality、qualityTs、changeSeq、changeSource、alarm/write/display 字段。',
         '- 扩展字段按属性分类：identityExtra、ownerExtra、typeExtra、valueExtra、timeExtra、qualityExtra、changeExtra、alarmExtra、writeExtra、displayExtra、configExtra、customExtra。',
         '- 脚本写页面变量使用 vars.set("page.温度", value, options?)；source 会按页面脚本/组件脚本自动补齐，reason 仅在需要审计时再写。',
         '- 单个变量的派生逻辑优先写在该变量自己的 scripts.onChange；页面 onVariableChange 主要负责全局汇总、组件分发和跨变量联动。',
-        '- 变量变化脚本直接读取 change；脚本调用组件方法使用 components.call(componentIdOrName, methodName, ...args)。文本支持 setText/clearText；图表支持 setOption/appendData/clear/resize。',
+        '- 变量变化脚本直接读取 change；脚本调用组件方法使用 components.call(componentIdOrName, methodName, ...args)。文本支持 setText/clearText；按钮支持 setStyle/setBackgroundColor/setText/setButtonType/setDisabled；图表支持 setOption/appendData/clear/resize。',
         '- customHtml 内使用 ScadaBridge.readVar/writeVar/subscribeVar/bindVarText/bindVarWriteDialog/callComponent。',
-        '- 系统点位才使用 readTag/writeTag/subscribe；页面逻辑变量不要误用 tag API。',
+        '- 普通页面/组件脚本中系统点位使用 tags.read/tags.write/tags.subscribe；customHtml 中系统点位才使用 ScadaBridge.readTag/writeTag/subscribe。',
         '【当前页面变量列表】',
         page_variable_lines.length ? page_variable_lines.join('\n') : '- 当前页面未定义 page 变量',
         '【当前组件变量列表】',
         component_variable_lines.length ? component_variable_lines.join('\n') : '- 当前组件未定义 component 变量',
+        '',
+    ];
+
+    return `${lines.join('\n')}\n`;
+}
+
+function buildSystemVariableListLine(variable: SystemVariableOption)
+{
+    return [
+        `- system.${variable.varTag}`,
+        `id=${variable.id}`,
+        `gatewayId=${variable.gatewayId ?? ''}`,
+        `name=${variable.name || ''}`,
+        `dataType=${variable.dataType || ''}`,
+        `rwMode=${variable.rwMode || ''}`,
+        `unit=${variable.unit || ''}`,
+        `alarmEnable=${variable.alarmEnable ?? 0}`,
+        `description=${variable.description || ''}`,
+    ].join('；');
+}
+
+function buildSelectedSystemVariableAiContext(variables: SystemVariableOption[])
+{
+    const lines = [
+        '【系统变量上下文规则】',
+        '- 系统变量可能有几万条，默认不全量加载；只有用户手动加入上下文篮的系统变量可以被本次 AI 使用。',
+        '- 如果用户要求根据设备状态、泵运行、故障等系统点位实现功能，但下方列表为空或没有明显匹配项，请先回复需要搜索/加入具体系统变量。',
+        '- 使用系统变量时优先用 varTag；普通页面/组件脚本使用 tags.read/tags.write/tags.subscribe，customHtml 才使用 ScadaBridge.readTag/writeTag/subscribe。',
+        '【已手动加入的系统变量】',
+        variables.length
+            ? variables.map((variable) => buildSystemVariableListLine(variable)).join('\n')
+            : '- 当前未加入系统变量',
         '',
     ];
 
@@ -941,6 +1078,7 @@ export default function ConfigPanel({
     onPageVariablesChange,
     onPageScriptsChange,
     onPageSettingsChange,
+    onOpenAiWorkbench,
     onCollapse,
 }: {
     page: PageSchema;
@@ -962,6 +1100,7 @@ export default function ConfigPanel({
     onPageVariablesChange: (variables: ComponentVariable[]) => void;
     onPageScriptsChange: (patch: Partial<PageScripts>) => void;
     onPageSettingsChange: (patch: Record<string, unknown>) => void;
+    onOpenAiWorkbench?: (target: AiWorkbenchTarget, options?: { reveal?: boolean }) => void;
     onCollapse?: () => void;
 }) {
     const [panelSection, setPanelSection] = useState<PanelSection>('props');
@@ -971,9 +1110,16 @@ export default function ConfigPanel({
     const [editorDrafts, setEditorDrafts] = useState<Record<string, string>>({});
     const [aiWindow, setAiWindow] = useState<FloatingWindowState>(default_ai_window);
     const [focusedEditorId, setFocusedEditorId] = useState<string | null>(null);
+    const [aiProviders, setAiProviders] = useState<AiProviderOption[]>([]);
     // AI 对话窗口状态
     const [aiPrompt, setAiPrompt] = useState('');
     const [aiLoading, setAiLoading] = useState(false);
+    const [codeAiMode, setCodeAiMode] = useState<AiInteractionMode>('agent');
+    const [codeAiProviderKey, setCodeAiProviderKey] = useState('');
+    const [systemVariableKeyword, setSystemVariableKeyword] = useState('');
+    const [systemVariableSearchLoading, setSystemVariableSearchLoading] = useState(false);
+    const [systemVariableSearchResults, setSystemVariableSearchResults] = useState<SystemVariableOption[]>([]);
+    const [selectedSystemVariables, setSelectedSystemVariables] = useState<SystemVariableOption[]>([]);
     const [aiHistory, setAiHistory] = useState<Array<{
         id: string;
         role: 'user' | 'assistant';
@@ -1003,6 +1149,8 @@ export default function ConfigPanel({
     const [pageVariableScriptDraft, setPageVariableScriptDraft] = useState('');
     const [pageVariableScriptAiPrompt, setPageVariableScriptAiPrompt] = useState('');
     const [pageVariableScriptAiLoading, setPageVariableScriptAiLoading] = useState(false);
+    const [pageVariableScriptAiMode, setPageVariableScriptAiMode] = useState<AiInteractionMode>('agent');
+    const [pageVariableScriptAiProviderKey, setPageVariableScriptAiProviderKey] = useState('');
     const [pageVariableScriptAiHistory, setPageVariableScriptAiHistory] = useState<Array<{
         id: string;
         role: 'user' | 'assistant';
@@ -1020,6 +1168,8 @@ export default function ConfigPanel({
     const [pageVariableAiOpen, setPageVariableAiOpen] = useState(false);
     const [pageVariableAiPrompt, setPageVariableAiPrompt] = useState('');
     const [pageVariableAiLoading, setPageVariableAiLoading] = useState(false);
+    const [pageVariableAiMode, setPageVariableAiMode] = useState<AiInteractionMode>('agent');
+    const [pageVariableAiProviderKey, setPageVariableAiProviderKey] = useState('');
     const [pageVariableAiHistory, setPageVariableAiHistory] = useState<Array<{
         id: string;
         role: 'user' | 'assistant';
@@ -1036,6 +1186,32 @@ export default function ConfigPanel({
     const pageVariableScriptAiHistoryRef = useRef<HTMLDivElement>(null);
     const pageVariableScriptDiffEditorRef = useRef<any>(null);
     const previousSelectedNodeIdRef = useRef<string | null>(null);
+
+    const loadAiProviders = useCallback(() => {
+        let cancelled = false;
+        void fetchAiProviders()
+            .then((providers) => {
+                if (cancelled) {
+                    return;
+                }
+                setAiProviders(providers);
+                const default_provider_key = getDefaultProviderKey(providers);
+                setCodeAiProviderKey((current) => current || default_provider_key);
+                setPageVariableAiProviderKey((current) => current || default_provider_key);
+                setPageVariableScriptAiProviderKey((current) => current || default_provider_key);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setAiProviders([]);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => loadAiProviders(), [loadAiProviders]);
 
     // AI 历史自动滚动到底部
     useEffect(() => {
@@ -1124,10 +1300,22 @@ export default function ConfigPanel({
             return;
         }
 
+        if (onOpenAiWorkbench) {
+            onOpenAiWorkbench({
+                scope: 'page_variable_script',
+                variableId: variable_id,
+                file: 'onChange.js',
+                label: `变量脚本 ${buildScopedVariableKey('page', target_variable.name)}`,
+            });
+            return;
+        }
+
         setPageVariableScriptTargetId(variable_id);
         setPageVariableScriptDraft(String(target_variable.scripts?.onChange || ''));
         setPageVariableScriptAiPrompt('');
         setPageVariableScriptDiffProposal(null);
+        setPageVariableScriptAiMode('agent');
+        setPageVariableScriptAiProviderKey(getDefaultProviderKey(aiProviders));
         setPageVariableScriptAiHistory([
             {
                 id: 'page-variable-script-ai-init',
@@ -1179,12 +1367,23 @@ export default function ConfigPanel({
     };
 
     const openPageVariableAiModal = () => {
+        if (onOpenAiWorkbench) {
+            onOpenAiWorkbench({
+                scope: 'page_variables',
+                label: '页面变量',
+            });
+            return;
+        }
+        setPageVariableAiMode('agent');
+        setPageVariableAiProviderKey(getDefaultProviderKey(aiProviders));
         setPageVariableAiOpen(true);
     };
 
     const closePageVariableAiModal = () => {
         setPageVariableAiOpen(false);
         setPageVariableAiPrompt('');
+        setPageVariableAiMode('agent');
+        setPageVariableAiProviderKey(getDefaultProviderKey(aiProviders));
     };
 
     const closePageVariableEditor = () => {
@@ -1314,7 +1513,7 @@ export default function ConfigPanel({
         const edit_intent_pattern = /(新增|添加|创建|新建|修改|更新|编辑|删除|移除|重命名|改名|改成|改为|设置|调整|完善|补充|追加|合并|替换|覆盖|清空|生成|脚本|onchange|onChange)/i;
         const replace_all_pattern = /(替换全部|整表替换|覆盖全部|重置变量列表|清空全部变量|只保留)/;
 
-        if (!edit_intent_pattern.test(prompt_text)) {
+        if (pageVariableAiMode === 'agent' && !edit_intent_pattern.test(prompt_text)) {
             const reject_message = '变量 AI 只接受编辑指令，不处理闲聊或查询。请直接说“新增/修改/删除/重命名哪个变量”，当前变量请查看左侧变量列表。';
             setPageVariableAiHistory((previous) => [
                 ...previous,
@@ -1343,6 +1542,8 @@ export default function ConfigPanel({
                 : page.variables.map((variable) => normalizeVariableDraft(variable));
             const active_variable = current_variables.find((item) => item.id === activePageVariableId) || null;
             const ai_result = await callAiVariablesEditTask({
+                providerKey: pageVariableAiProviderKey || undefined,
+                interactionMode: pageVariableAiMode,
                 messages: [...pageVariableAiHistory, user_entry].map((entry) => ({
                     role: entry.role,
                     content: entry.content,
@@ -1358,6 +1559,19 @@ export default function ConfigPanel({
                     runtimeRules: buildRuntimeVariableAiContext(page),
                 },
             });
+
+            if (pageVariableAiMode === 'ask') {
+                setPageVariableAiHistory((previous) => [
+                    ...previous,
+                    {
+                        id: `page-variable-assistant-answer-${Date.now()}`,
+                        role: 'assistant',
+                        content: ai_result.reply || '我没有得到可用回答，请换一种问法。',
+                    },
+                ]);
+                setPageVariableAiPrompt('');
+                return;
+            }
 
             const structured_result =
                 ai_result.resultType === 'variables'
@@ -1498,6 +1712,8 @@ export default function ConfigPanel({
 
         try {
             const ai_result = await callAiScriptEditTask({
+                providerKey: pageVariableScriptAiProviderKey || undefined,
+                interactionMode: pageVariableScriptAiMode,
                 messages: next_history.map((entry) => ({
                     role: entry.role,
                     content: entry.content,
@@ -1516,6 +1732,19 @@ export default function ConfigPanel({
                     runtimeRules: buildRuntimeVariableAiContext(page),
                 },
             });
+
+            if (pageVariableScriptAiMode === 'ask') {
+                setPageVariableScriptAiHistory((previous) => [
+                    ...previous,
+                    {
+                        id: `page-variable-script-assistant-answer-${Date.now()}`,
+                        role: 'assistant',
+                        content: ai_result.reply || '我没有得到可用回答，请换一种问法。',
+                    },
+                ]);
+                return;
+            }
+
             let reply_content = ai_result.reply || '已处理';
             const structured_code =
                 ai_result.resultType === 'code'
@@ -1981,6 +2210,46 @@ export default function ConfigPanel({
             x: previous.x || Math.max(16, window.innerWidth - ai_width - 24),
             y: previous.y || 88,
         }));
+        if (!aiWindow.visible) {
+            setCodeAiMode('agent');
+            setCodeAiProviderKey(getDefaultProviderKey(aiProviders));
+        }
+    };
+
+    const updateAiWorkbenchTargetForEditor = (
+        target_kind: 'page' | 'node',
+        target_id: string,
+        target_node: ComponentNode | null,
+        tab: WorkspaceTab,
+        options?: { reveal?: boolean },
+    ) => {
+        if (!onOpenAiWorkbench) {
+            return;
+        }
+
+        const file = tab === 'propsJson'
+            ? 'props.json'
+            : buildEventFileName(String(tab));
+        if (target_kind === 'page') {
+            onOpenAiWorkbench({
+                scope: tab === 'propsJson' ? 'page_settings' : 'script',
+                file,
+                label: `页面 / ${file}`,
+            }, options);
+            return;
+        }
+
+        if (!target_node) {
+            return;
+        }
+
+        onOpenAiWorkbench({
+            scope: tab === 'propsJson' ? 'component' : 'script',
+            nodeId: target_id,
+            componentType: target_node.type,
+            file,
+            label: `${target_node.title} / ${file}`,
+        }, options);
     };
 
     const openEditorForNode = (node_id: string, initial_tab: WorkspaceTab) => {
@@ -2001,7 +2270,11 @@ export default function ConfigPanel({
                 ),
             );
             bringEditorToFront(window_id);
-            ensureAiWindowVisible();
+            if (onOpenAiWorkbench) {
+                updateAiWorkbenchTargetForEditor('node', node_id, target_node, initial_tab);
+            } else {
+                ensureAiWindowVisible();
+            }
             return;
         }
 
@@ -2010,7 +2283,11 @@ export default function ConfigPanel({
         setOpenEditors((previous) => [...previous, next_window]);
         setEditorOrder((previous) => [...previous, next_window.id]);
         setFocusedEditorId(next_window.id);
-        ensureAiWindowVisible();
+        if (onOpenAiWorkbench) {
+            updateAiWorkbenchTargetForEditor('node', node_id, target_node, initial_tab);
+        } else {
+            ensureAiWindowVisible();
+        }
     };
 
     const openEditorForPage = (initial_tab: Exclude<WorkspaceTab, 'propsJson'> | 'propsJson') => {
@@ -2026,7 +2303,11 @@ export default function ConfigPanel({
                 ),
             );
             bringEditorToFront(window_id);
-            ensureAiWindowVisible();
+            if (onOpenAiWorkbench) {
+                updateAiWorkbenchTargetForEditor('page', page.id, null, initial_tab);
+            } else {
+                ensureAiWindowVisible();
+            }
             return;
         }
 
@@ -2035,7 +2316,11 @@ export default function ConfigPanel({
         setOpenEditors((previous) => [...previous, next_window]);
         setEditorOrder((previous) => [...previous, next_window.id]);
         setFocusedEditorId(next_window.id);
-        ensureAiWindowVisible();
+        if (onOpenAiWorkbench) {
+            updateAiWorkbenchTargetForEditor('page', page.id, null, initial_tab);
+        } else {
+            ensureAiWindowVisible();
+        }
     };
 
     const forceCloseEditorWindow = (window_id: string) => {
@@ -2165,6 +2450,43 @@ export default function ConfigPanel({
         };
     };
 
+    const handleSearchSystemVariables = useCallback(async () => {
+        const keyword = systemVariableKeyword.trim();
+        if (!keyword) {
+            setSystemVariableSearchResults([]);
+            message.warning('请输入系统变量关键词');
+            return;
+        }
+
+        setSystemVariableSearchLoading(true);
+        try {
+            const results = await searchSystemVariables(keyword, 20);
+            setSystemVariableSearchResults(results);
+            if (results.length === 0) {
+                message.info('没有匹配的系统变量');
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : '系统变量搜索失败');
+        } finally {
+            setSystemVariableSearchLoading(false);
+        }
+    }, [systemVariableKeyword]);
+
+    const addSystemVariableToContext = useCallback((variable: SystemVariableOption) => {
+        setSelectedSystemVariables((previous) => {
+            if (previous.some((item) => item.id === variable.id)) {
+                return previous;
+            }
+            return [...previous, variable];
+        });
+    }, []);
+
+    const removeSystemVariableFromContext = useCallback((variable_id: number) => {
+        setSelectedSystemVariables((previous) =>
+            previous.filter((item) => item.id !== variable_id),
+        );
+    }, []);
+
     /** 代码编辑 AI：将用户提问（带上当前文件与选中代码）发给后端 AI */
     const executeCodePrompt = async (raw: string) => {
         const text = raw.trim();
@@ -2222,6 +2544,7 @@ export default function ConfigPanel({
         }
 
         contextPrefix += buildRuntimeVariableAiContext(page);
+        contextPrefix += buildSelectedSystemVariableAiContext(selectedSystemVariables);
 
         // customHtml 组件额外注入 ScadaBridge API 文档和当前完整上下文
         const custom_context_node = focusedNode?.type === 'customHtml'
@@ -2293,6 +2616,12 @@ export default function ConfigPanel({
         } else if (node?.type === 'customHtml') {
             contextHint = `上下文：customHtml · 属性 + ScadaBridge API`;
         }
+        if (selectedSystemVariables.length > 0) {
+            const system_variable_hint = `系统变量 ${selectedSystemVariables.length} 个`;
+            contextHint = contextHint
+                ? `${contextHint} · ${system_variable_hint}`
+                : `上下文：${system_variable_hint}`;
+        }
         const userEntry = {
             id: `user-${Date.now()}`,
             role: 'user' as const,
@@ -2312,8 +2641,24 @@ export default function ConfigPanel({
         const messages = nextHistory.map((e) => ({ role: e.role, content: e.content }));
 
         try {
-            const result = await callAiChat(messages, nodes);
+            const result = await callAiChat(messages, nodes, {
+                providerKey: codeAiProviderKey || undefined,
+                interactionMode: codeAiMode,
+            });
             let replyContent = result.reply || '已处理';
+
+            if (codeAiMode === 'ask') {
+                setAiHistory((prev) => [
+                    ...prev,
+                    {
+                        id: `assistant-answer-${Date.now()}`,
+                        role: 'assistant' as const,
+                        content: replyContent,
+                    },
+                ]);
+                return;
+            }
+
             // 解析 AI 回复中的代码块，如果有则附到消息上以供对比
             let codeBlock = extractCodeBlock(replyContent)
                 || inferCodeBlockFromReply(replyContent, focusedWindow?.activeTab);
@@ -3939,7 +4284,21 @@ export default function ConfigPanel({
                                     当前变量脚本的专属上下文，返回完整 onChange.js 代码
                                 </div>
                             </div>
-                            <Tag color="gold">置顶</Tag>
+                            <div
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}
+                                onMouseDown={(event) => event.stopPropagation()}
+                            >
+                                {renderAiDialogControls({
+                                    mode: pageVariableScriptAiMode,
+                                    providerKey: pageVariableScriptAiProviderKey,
+                                    providers: aiProviders,
+                                    disabled: pageVariableScriptAiLoading,
+                                    onModeChange: setPageVariableScriptAiMode,
+                                    onProviderChange: setPageVariableScriptAiProviderKey,
+                                    onRequestProviders: loadAiProviders,
+                                })}
+                                <Tag color="gold">置顶</Tag>
+                            </div>
                         </div>
                         <div className="floating-tool-window-body floating-tool-window-body-ai">
                             <div className="ai-assistant-history" ref={pageVariableScriptAiHistoryRef} style={{ flex: 1, minHeight: 0 }}>
@@ -3997,7 +4356,9 @@ export default function ConfigPanel({
                                     value={pageVariableScriptAiPrompt}
                                     disabled={pageVariableScriptAiLoading}
                                     autoSize={{ minRows: 2, maxRows: 5 }}
-                                    placeholder="描述你想让这个变量变化时执行什么逻辑…"
+                                    placeholder={pageVariableScriptAiMode === 'ask'
+                                        ? '可以询问当前变量、脚本或运行时上下文…'
+                                        : '描述你想让这个变量变化时执行什么逻辑…'}
                                     onChange={(event) => setPageVariableScriptAiPrompt(event.target.value)}
                                     onPressEnter={(event) => {
                                         if (event.shiftKey) {
@@ -4052,7 +4413,18 @@ export default function ConfigPanel({
                                 变量批量编辑、重命名、高级字段和变量脚本都可以从这里生成
                             </div>
                         </div>
-                        <Tag color="gold">置顶</Tag>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            {renderAiDialogControls({
+                                mode: pageVariableAiMode,
+                                providerKey: pageVariableAiProviderKey,
+                                providers: aiProviders,
+                                disabled: pageVariableAiLoading,
+                                onModeChange: setPageVariableAiMode,
+                                onProviderChange: setPageVariableAiProviderKey,
+                                onRequestProviders: loadAiProviders,
+                            })}
+                            <Tag color="gold">置顶</Tag>
+                        </div>
                     </div>
                     <div className="floating-tool-window-body floating-tool-window-body-ai">
                         <div className="ai-assistant-history" ref={pageVariableAiHistoryRef} style={{ flex: 1, minHeight: 0 }}>
@@ -4098,7 +4470,9 @@ export default function ConfigPanel({
                                 value={pageVariableAiPrompt}
                                 disabled={pageVariableAiLoading}
                                 autoSize={{ minRows: 3, maxRows: 6 }}
-                                placeholder="例如：新增 page.设备状态 变量，字符串类型，只读；给 page.温度 增加 onChange 脚本，超过 75 时写日志。"
+                                placeholder={pageVariableAiMode === 'ask'
+                                    ? '可以询问当前变量、状态、字段含义或让 AI 解释上下文…'
+                                    : '例如：新增 page.设备状态 变量，字符串类型，只读；给 page.温度 增加 onChange 脚本，超过 75 时写日志。'}
                                 onChange={(event) => setPageVariableAiPrompt(event.target.value)}
                                 onPressEnter={(event) => {
                                     if (event.shiftKey) {
@@ -4231,13 +4605,21 @@ export default function ConfigPanel({
                                     block
                                     value={window_item.activeTab}
                                     onChange={(value) => {
+                                        const next_tab = value as WorkspaceTab;
                                         bringEditorToFront(window_item.id);
                                         setOpenEditors((previous) =>
                                             previous.map((item) =>
                                                 item.id === window_item.id
-                                                    ? { ...item, activeTab: value as WorkspaceTab }
+                                                    ? { ...item, activeTab: next_tab }
                                                     : item,
                                             ),
+                                        );
+                                        updateAiWorkbenchTargetForEditor(
+                                            window_item.targetKind,
+                                            window_item.targetId,
+                                            target_node,
+                                            next_tab,
+                                            { reveal: false },
                                         );
                                     }}
                                     options={
@@ -4455,7 +4837,21 @@ export default function ConfigPanel({
                                     单实例置顶窗口，始终跟随当前聚焦编辑器的内容上下文
                                 </div>
                             </div>
-                            <Tag color="gold">置顶</Tag>
+                            <div
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}
+                                onMouseDown={(event) => event.stopPropagation()}
+                            >
+                                {renderAiDialogControls({
+                                    mode: codeAiMode,
+                                    providerKey: codeAiProviderKey,
+                                    providers: aiProviders,
+                                    disabled: aiLoading,
+                                    onModeChange: setCodeAiMode,
+                                    onProviderChange: setCodeAiProviderKey,
+                                    onRequestProviders: loadAiProviders,
+                                })}
+                                <Tag color="gold">置顶</Tag>
+                            </div>
                         </div>
                         <div className="floating-tool-window-body floating-tool-window-body-ai">
                             {/* AI 对话历史 */}
@@ -4528,13 +4924,109 @@ export default function ConfigPanel({
                                             : buildEventFileName(String(focusedWindow.activeTab))}
                                 </div>
                             )}
+                            <div
+                                style={{
+                                    borderTop: '1px solid #30363d',
+                                    padding: '8px',
+                                    flexShrink: 0,
+                                }}
+                            >
+                                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                                    <Space size={6} wrap>
+                                        <Typography.Text style={{ color: '#8b949e', fontSize: 11 }}>
+                                            系统变量上下文
+                                        </Typography.Text>
+                                        {selectedSystemVariables.length === 0 ? (
+                                            <Tag>未加入</Tag>
+                                        ) : (
+                                            selectedSystemVariables.map((variable) => (
+                                                <Tag
+                                                    key={variable.id}
+                                                    closable
+                                                    onClose={() => removeSystemVariableFromContext(variable.id)}
+                                                >
+                                                    {variable.name || variable.varTag}
+                                                </Tag>
+                                            ))
+                                        )}
+                                    </Space>
+                                    <Space.Compact style={{ width: '100%' }}>
+                                        <Input
+                                            size="small"
+                                            value={systemVariableKeyword}
+                                            disabled={systemVariableSearchLoading}
+                                            placeholder="搜索系统变量：泵 状态/运行/故障"
+                                            onChange={(event) => setSystemVariableKeyword(event.target.value)}
+                                            onPressEnter={() => void handleSearchSystemVariables()}
+                                        />
+                                        <Button
+                                            size="small"
+                                            icon={<SearchOutlined />}
+                                            loading={systemVariableSearchLoading}
+                                            onClick={() => void handleSearchSystemVariables()}
+                                        />
+                                    </Space.Compact>
+                                    {systemVariableSearchResults.length > 0 ? (
+                                        <div
+                                            style={{
+                                                maxHeight: 96,
+                                                overflow: 'auto',
+                                                border: '1px solid #30363d',
+                                                borderRadius: 6,
+                                            }}
+                                        >
+                                            {systemVariableSearchResults.map((variable) => {
+                                                const selected = selectedSystemVariables.some((item) =>
+                                                    item.id === variable.id,
+                                                );
+                                                return (
+                                                    <div
+                                                        key={variable.id}
+                                                        style={{
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'space-between',
+                                                            gap: 8,
+                                                            padding: '4px 6px',
+                                                            borderBottom: '1px solid #30363d',
+                                                        }}
+                                                    >
+                                                        <div style={{ minWidth: 0 }}>
+                                                            <Typography.Text
+                                                                style={{ color: '#e6edf3', fontSize: 12 }}
+                                                                ellipsis
+                                                            >
+                                                                {variable.name || variable.varTag}
+                                                            </Typography.Text>
+                                                            <div style={{ color: '#8b949e', fontSize: 11 }}>
+                                                                {variable.varTag}
+                                                                {variable.description ? ` · ${variable.description}` : ''}
+                                                            </div>
+                                                        </div>
+                                                        <Button
+                                                            size="small"
+                                                            icon={<PlusOutlined />}
+                                                            disabled={selected}
+                                                            onClick={() => addSystemVariableToContext(variable)}
+                                                        >
+                                                            {selected ? '已加入' : '加入'}
+                                                        </Button>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : null}
+                                </Space>
+                            </div>
                             {/* 输入区域 */}
                             <div className="ai-assistant-footer" style={{ flexShrink: 0 }}>
                                 <Input.TextArea
                                     value={aiPrompt}
                                     disabled={aiLoading}
                                     autoSize={{ minRows: 2, maxRows: 4 }}
-                                    placeholder="描述你想实现的脚本功能…"
+                                    placeholder={codeAiMode === 'ask'
+                                        ? '可以询问当前脚本、属性或上下文含义…'
+                                        : '描述你想实现的脚本功能…'}
                                     onChange={(e) => setAiPrompt(e.target.value)}
                                     onPressEnter={(e) => {
                                         if (e.shiftKey) return;

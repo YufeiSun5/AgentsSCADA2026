@@ -3,8 +3,8 @@
  * 只保留对话 UI + 多轮 AI 调用，去掉本地规则引擎，支持拖动。
  */
 import { CloseOutlined, CopyOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons';
-import { Button, Input, Space, Typography, message } from 'antd';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Input, Segmented, Select, Space, Typography, message } from 'antd';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   flattenNodes,
   type CanvasPosition,
@@ -12,7 +12,13 @@ import {
   type ComponentType,
   type PageSchema,
 } from '../../schema/pageSchema';
-import { callAiChat, type AiAction } from '../../services/aiService';
+import {
+  callAiChat,
+  fetchAiProviders,
+  type AiAction,
+  type AiInteractionMode,
+  type AiProviderOption,
+} from '../../services/aiService';
 
 const AI_LAYOUT_DEBUG_PREFIX = '[AiLayoutAssistant]';
 
@@ -42,6 +48,10 @@ interface AiLayoutAssistantProps {
   onAfterActionsApplied?: () => Promise<void> | void;
 }
 
+function getDefaultProviderKey(providers: AiProviderOption[]) {
+  return providers[0]?.providerKey || '';
+}
+
 function createEntry(role: 'user' | 'assistant', content: string): ChatEntry {
   return {
     id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -64,6 +74,9 @@ export default function AiLayoutAssistant({
 }: AiLayoutAssistantProps) {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [providers, setProviders] = useState<AiProviderOption[]>([]);
+  const [interactionMode, setInteractionMode] = useState<AiInteractionMode>('agent');
+  const [selectedProviderKey, setSelectedProviderKey] = useState('');
   const [history, setHistory] = useState<ChatEntry[]>([
     createEntry('assistant', '你好！我可以帮你调整布局、添加组件、修改属性，直接描述想做什么就行。'),
   ]);
@@ -79,6 +92,37 @@ export default function AiLayoutAssistant({
   }>({ active: false, startX: 0, startY: 0, originX: 0, originY: 0 });
 
   const historyRef = useRef<HTMLDivElement>(null);
+
+  const loadProviders = useCallback(() => {
+    let cancelled = false;
+    void fetchAiProviders()
+      .then((nextProviders) => {
+        if (cancelled) {
+          return;
+        }
+        setProviders(nextProviders);
+        setSelectedProviderKey((current) => current || getDefaultProviderKey(nextProviders));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProviders([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => loadProviders(), [loadProviders]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    setInteractionMode('agent');
+    setSelectedProviderKey(getDefaultProviderKey(providers));
+  }, [visible, providers]);
 
   const existingNodes = useMemo(
     () => flattenNodes(page.root).filter((n) => n.id !== page.root.id),
@@ -290,7 +334,15 @@ export default function AiLayoutAssistant({
     });
 
     try {
-      const result = await callAiChat(messages, nodes);
+      const result = await callAiChat(messages, nodes, {
+        providerKey: selectedProviderKey || undefined,
+        interactionMode,
+      });
+      if (interactionMode === 'ask') {
+        setHistory((prev) => [...prev, createEntry('assistant', result.reply || '我没有得到可用回答，请换一种问法。')]);
+        return;
+      }
+
       const appliedCount = applyAiActions(Array.isArray(result.actions) ? result.actions : []);
       if (appliedCount > 0) {
         await onAfterActionsApplied?.();
@@ -320,13 +372,43 @@ export default function AiLayoutAssistant({
             AI 编排助手
           </Typography.Text>
         </Space>
-        <Button
-          type="text"
-          size="small"
-          icon={<CloseOutlined />}
-          style={{ color: '#94a3b8' }}
-          onClick={() => onVisibleChange(false)}
-        />
+        <Space size={8} wrap onMouseDown={(event) => event.stopPropagation()}>
+          <Segmented
+            size="small"
+            value={interactionMode}
+            disabled={loading}
+            options={[
+              { label: '提问', value: 'ask' },
+              { label: '代理', value: 'agent' },
+            ]}
+            onChange={(value) => setInteractionMode(value as AiInteractionMode)}
+          />
+          <Select
+            size="small"
+            value={selectedProviderKey || undefined}
+            disabled={loading}
+            placeholder="默认模型"
+            style={{ width: 180 }}
+            notFoundContent="暂无可选模型"
+            options={providers.map((provider) => ({
+              label: `${provider.name} · ${provider.model}`,
+              value: provider.providerKey,
+            }))}
+            onChange={setSelectedProviderKey}
+            onDropdownVisibleChange={(open) => {
+              if (open && providers.length === 0) {
+                loadProviders();
+              }
+            }}
+          />
+          <Button
+            type="text"
+            size="small"
+            icon={<CloseOutlined />}
+            style={{ color: '#94a3b8' }}
+            onClick={() => onVisibleChange(false)}
+          />
+        </Space>
       </div>
 
       {/* 对话历史 */}
@@ -363,7 +445,9 @@ export default function AiLayoutAssistant({
           value={prompt}
           disabled={loading}
           autoSize={{ minRows: 2, maxRows: 4 }}
-          placeholder="描述你想做什么…（Shift+Enter 换行）"
+          placeholder={interactionMode === 'ask'
+            ? '可以询问当前页面、组件或布局上下文…'
+            : '描述你想做什么…（Shift+Enter 换行）'}
           onChange={(e) => setPrompt(e.target.value)}
           onPressEnter={(e) => {
             if (e.shiftKey) return;

@@ -3,6 +3,8 @@
  * 支持普通脚本点击，也支持统一实时服务回写控制指令。
  */
 import { Button, Modal, message } from 'antd';
+import type { CSSProperties } from 'react';
+import { useEffect, useState } from 'react';
 import { usePageRuntime } from '../../runtime/pageRuntime';
 import { realtimeService } from '../../services/realtimeService';
 import type { MaterialRenderProps } from './materialTypes';
@@ -50,9 +52,45 @@ export default function ButtonMaterial({
 }: MaterialRenderProps) {
   const writeBack = readWriteBack(node.props.writeBack);
   const runtime = usePageRuntime();
+  const [runtimeText, setRuntimeText] = useState<string | null>(null);
+  const [runtimeButtonType, setRuntimeButtonType] = useState<string | null>(null);
+  const [runtimeStyle, setRuntimeStyle] = useState<CSSProperties>({});
+  const [runtimeDisabled, setRuntimeDisabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    setRuntimeText(null);
+    setRuntimeButtonType(null);
+    setRuntimeStyle({});
+    setRuntimeDisabled(null);
+  }, [node.id]);
+
+  useEffect(() => {
+    return runtime?.registerComponent(node.id, {
+      setText: (value) => setRuntimeText(String(value ?? '')),
+      clearText: () => setRuntimeText(null),
+      setButtonType: (value) => setRuntimeButtonType(String(value || 'primary')),
+      setDisabled: (value) => setRuntimeDisabled(Boolean(value)),
+      setBackgroundColor: (value) =>
+        setRuntimeStyle((previous) => ({
+          ...previous,
+          backgroundColor: String(value || ''),
+          borderColor: String(value || ''),
+        })),
+      setStyle: (patch) => {
+        const stylePatch = readObject(patch) as CSSProperties;
+        setRuntimeStyle((previous) => ({ ...previous, ...stylePatch }));
+      },
+      clearRuntimeState: () => {
+        setRuntimeText(null);
+        setRuntimeButtonType(null);
+        setRuntimeStyle({});
+        setRuntimeDisabled(null);
+      },
+    }, [node.name]);
+  }, [runtime, node.id, node.name]);
 
   const executeClick = async () => {
-    if (!interactive) {
+    if (!interactive || runtimeDisabled === true || node.props.disabled === true) {
       return;
     }
 
@@ -97,7 +135,7 @@ export default function ButtonMaterial({
   };
 
   const handleClick = () => {
-    if (!interactive) {
+    if (!interactive || runtimeDisabled === true || node.props.disabled === true) {
       return;
     }
 
@@ -116,11 +154,19 @@ export default function ButtonMaterial({
 
   return (
     <Button
-      style={{ width: '100%', height: '100%' }}
-      type={String(node.props.buttonType || 'primary') as 'primary' | 'default' | 'dashed' | 'link' | 'text'}
+      style={{
+        width: '100%',
+        height: '100%',
+        backgroundColor: String(node.props.backgroundColor || '') || undefined,
+        borderColor: String(node.props.borderColor || node.props.backgroundColor || '') || undefined,
+        color: String(node.props.color || '') || undefined,
+        ...runtimeStyle,
+      }}
+      disabled={runtimeDisabled ?? node.props.disabled === true}
+      type={String(runtimeButtonType || node.props.buttonType || 'primary') as 'primary' | 'default' | 'dashed' | 'link' | 'text'}
       onClick={handleClick}
     >
-      {String(node.props.text || node.title)}
+      {runtimeText ?? String(node.props.text || node.title)}
     </Button>
   );
 }
